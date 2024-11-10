@@ -67,6 +67,11 @@ async function fetchTotalTokenSupply(): Promise<number> {
 
 async function fetchFounderBalance(): Promise<number> {
   try {
+    if (!FOUNDER_WALLET) {
+      console.error('[Founder Error] No founder wallet address provided');
+      return 0;
+    }
+
     const connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
     const walletPublicKey = new PublicKey(FOUNDER_WALLET);
     console.log('[Founder] Fetching balance for wallet:', FOUNDER_WALLET);
@@ -90,7 +95,7 @@ async function fetchFounderBalance(): Promise<number> {
     console.log('[Founder] Total founder balance:', totalBalance.toLocaleString(), 'tokens');
     return totalBalance;
   } catch (error) {
-    console.error('[Founder Error] Fetching founder balance:', error);
+    console.error('[Founder Error] Fetching founder balance:', error instanceof Error ? error.message : 'Unknown error');
     return 0;
   }
 }
