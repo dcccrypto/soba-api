@@ -230,17 +230,17 @@ interface HeliusResponse {
 // Update the token holders fetch function with proper typing
 async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number> {
   try {
-    console.log('[API] Fetching token holders from Helius...');
     let page = 1;
     const uniqueOwners = new Set<string>();
 
     while (true) {
+      // Rate limiting check
       if (!holdersRateLimiter.canMakeRequest()) {
-        console.log('[Rate Limiter] Waiting for next available slot...');
         await new Promise(resolve => setTimeout(resolve, 1000));
         continue;
       }
 
+      // Fetch token accounts from Helius
       const response = await fetch(HELIUS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -250,24 +250,20 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
           id: 'helius-holders',
           params: {
             page: page,
-            limit: 1000,
+            limit: 1000,  // Fetches 1000 holders per page
             mint: tokenAddress,
           },
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
       const data = await response.json() as HeliusResponse;
 
+      // Break if no more token accounts
       if (!data.result?.token_accounts || data.result.token_accounts.length === 0) {
-        console.log(`[API] Completed fetching holders. Total pages: ${page - 1}`);
         break;
       }
 
-      console.log(`[API] Processing holders from page ${page}`);
+      // Add unique owners to set
       data.result.token_accounts.forEach((account) => 
         uniqueOwners.add(account.owner)
       );
@@ -275,9 +271,7 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
       page++;
     }
 
-    const holderCount = uniqueOwners.size;
-    console.log('[API] Total unique holders:', holderCount);
-    return holderCount;
+    return uniqueOwners.size;  // Return total unique holders
   } catch (error) {
     console.error('[API] Error fetching token holders from Helius:', error);
     throw error;
