@@ -9,6 +9,7 @@ const web3_js_1 = require("@solana/web3.js");
 const axios_1 = __importDefault(require("axios"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const limiter_1 = require("limiter");
+const node_fetch_1 = __importDefault(require("node-fetch"));
 // Add logger middleware
 const logger = (req, res, next) => {
     const start = Date.now();
@@ -82,36 +83,44 @@ axiosWithRetry.interceptors.response.use(undefined, async (err) => {
     await new Promise(resolve => setTimeout(resolve, config.retryDelay || 1000));
     return axiosWithRetry(config);
 });
-// Solana connection setup
+// Add RPC endpoints configuration
 const RPC_ENDPOINTS = [
-    process.env.SOLANA_RPC_URL,
-    'https://solana-mainnet.rpc.extrnode.com',
-    'https://rpc.ankr.com/solana'
-].filter((endpoint) => Boolean(endpoint));
-// Add detailed error logging for Solana connection
+    'https://api.mainnet-beta.solana.com',
+    'https://solana-api.projectserum.com',
+    'https://rpc.ankr.com/solana',
+    process.env.CUSTOM_RPC_URL, // Add your custom RPC URL from env if available
+].filter(Boolean);
+// Add connection management
+let currentRpcIndex = 0;
+let solanaConnection = null;
 const getWorkingConnection = async () => {
-    for (const endpoint of RPC_ENDPOINTS) {
+    if (solanaConnection) {
         try {
-            console.log(`[Solana] Attempting to connect to ${endpoint}`);
-            const connection = new web3_js_1.Connection(endpoint, {
-                commitment: 'confirmed',
-                confirmTransactionInitialTimeout: 60000
-            });
-            // Add timeout for getSlot
-            const slotPromise = connection.getSlot();
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000));
-            const slot = await Promise.race([slotPromise, timeoutPromise]);
-            console.log(`[Solana] Successfully connected to ${endpoint} (slot: ${slot})`);
+            // Test if current connection is working
+            await solanaConnection.getSlot();
+            return solanaConnection;
+        }
+        catch (error) {
+            console.log('[RPC] Current connection failed, trying next endpoint');
+        }
+    }
+    // Try each RPC endpoint until one works
+    for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+        currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length;
+        const endpoint = RPC_ENDPOINTS[currentRpcIndex];
+        try {
+            console.log(`[RPC] Trying endpoint: ${endpoint}`);
+            const connection = new web3_js_1.Connection(endpoint, 'confirmed');
+            await connection.getSlot(); // Test the connection
+            solanaConnection = connection;
+            console.log(`[RPC] Successfully connected to: ${endpoint}`);
             return connection;
         }
         catch (error) {
-            console.error(`[Solana] Failed to connect to ${endpoint}:`, {
-                error: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined
-            });
+            console.error(`[RPC] Failed to connect to ${endpoint}:`, error);
         }
     }
-    throw new Error('[Solana] All RPC endpoints failed');
+    throw new Error('Unable to connect to any Solana RPC endpoint');
 };
 async function fetchFounderBalance(connection, founderAddress, tokenAddress) {
     var _a;
@@ -133,46 +142,55 @@ const holdersRateLimiter = new limiter_1.RateLimiter({
     tokensPerInterval: 1,
     interval: "second"
 });
-// Update the fetchTokenHolders function with proper rate limiting
-async function fetchTokenHolders(tokenAddress) {
-    var _a, _b;
+// Add Helius configuration
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+// Update the token holders fetch function with proper typing
+async function fetchTokenHoldersFromHelius(tokenAddress) {
+    var _a;
     try {
-        console.log('[API] Fetching token holders from Solana Tracker...');
-        // Wait for rate limit before making request
-        await holdersRateLimiter.removeTokens(1);
-        const response = await axiosWithRetry.get(`https://data.solanatracker.io/tokens/${tokenAddress}/holders`, {
-            headers: {
-                'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
-                'Accept': 'application/json'
-            },
-            retry: 2,
-            retryDelay: 1100,
-            timeout: 15000
-        });
-        if (response.data && Array.isArray(response.data)) {
-            const holderCount = response.data.length;
-            console.log('[API] Holders count calculated:', holderCount);
-            return holderCount;
+        console.log('[API] Fetching token holders from Helius...');
+        let page = 1;
+        const uniqueOwners = new Set();
+        while (true) {
+            const response = await (0, node_fetch_1.default)(HELIUS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    method: 'getTokenAccounts',
+                    id: 'helius-holders',
+                    params: {
+                        page: page,
+                        limit: 1000,
+                        mint: tokenAddress,
+                    },
+                }),
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            if (!((_a = data.result) === null || _a === void 0 ? void 0 : _a.token_accounts) || data.result.token_accounts.length === 0) {
+                console.log(`[API] Completed fetching holders. Total pages: ${page - 1}`);
+                break;
+            }
+            console.log(`[API] Processing holders from page ${page}`);
+            data.result.token_accounts.forEach((account) => uniqueOwners.add(account.owner));
+            page++;
         }
-        console.warn('[API] Unexpected holders data format:', response.data);
-        return 0;
+        const holderCount = uniqueOwners.size;
+        console.log('[API] Total unique holders:', holderCount);
+        return holderCount;
     }
     catch (error) {
-        if (axios_1.default.isAxiosError(error) && ((_a = error.response) === null || _a === void 0 ? void 0 : _a.status) === 429) {
-            console.error('[API] Rate limit exceeded for holders endpoint. Retrying after delay...');
-            // Wait for 1.1 seconds before retrying
-            await new Promise(resolve => setTimeout(resolve, 1100));
-            return fetchTokenHolders(tokenAddress); // Retry once
-        }
-        console.error('[API] Error fetching holders:', {
-            status: axios_1.default.isAxiosError(error) ? (_b = error.response) === null || _b === void 0 ? void 0 : _b.status : undefined,
-            message: error instanceof Error ? error.message : String(error)
-        });
-        return 0;
+        console.error('[API] Error fetching token holders from Helius:', error);
+        throw error;
     }
 }
-// Update the token-stats endpoint to handle rate limits better
+// Update the token-stats endpoint
 app.get('/api/token-stats', async (_req, res) => {
+    var _a, _b, _c;
     console.log('[API] Received token stats request');
     try {
         const now = Date.now();
@@ -185,70 +203,46 @@ app.get('/api/token-stats', async (_req, res) => {
             });
         }
         console.log('[Cache] Cache miss, fetching fresh data');
+        const connection = await getWorkingConnection();
         const tokenAddress = process.env.TOKEN_ADDRESS;
         const founderAddress = process.env.FOUNDER_ADDRESS;
         if (!tokenAddress || !founderAddress) {
             throw new Error('Missing required environment variables');
         }
-        console.log('[API] Fetching data from multiple sources...');
-        try {
-            // Sequential fetching for better rate limit handling
-            const priceResponse = await axiosWithRetry.get(`https://data.solanatracker.io/price?token=${tokenAddress}`, {
-                headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-                retry: 2,
-                retryDelay: 1100,
-                timeout: 10000
-            }).catch(error => {
-                console.error('[API] Price fetch error:', error);
-                return { data: { price: 0 } };
-            });
-            // Wait briefly before next request
-            await new Promise(resolve => setTimeout(resolve, 100));
-            const holdersCount = await fetchTokenHolders(tokenAddress).catch(error => {
-                console.error('[API] Holders fetch error:', error);
-                return 0;
-            });
-            // Wait briefly before next request
-            await new Promise(resolve => setTimeout(resolve, 100));
-            const supplyResponse = await axiosWithRetry.get(`https://data.solanatracker.io/supply?token=${tokenAddress}`, {
-                headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-                retry: 2,
-                retryDelay: 1100,
-                timeout: 10000
-            }).catch(error => {
-                console.error('[API] Supply fetch error:', error);
-                return { data: { supply: 996758135.0228987 } };
-            });
-            const responseData = {
-                price: priceResponse.data.price || 0,
-                totalSupply: supplyResponse.data.supply || 996758135.0228987,
-                founderBalance: 260660000,
-                holders: holdersCount,
-                lastUpdated: new Date().toISOString()
-            };
-            console.log('[API] Data fetched successfully:', responseData);
-            cache.data = responseData;
-            cache.timestamp = now;
-            console.log('[Cache] Cache updated');
-            res.json({
-                ...responseData,
-                cached: false
-            });
-        }
-        catch (error) {
-            console.error('[API] Data fetch error:', error);
-            throw error;
-        }
+        // Fetch all data using both Solana RPC and Helius
+        const [tokenSupply, founderAccount, holdersCount] = await Promise.all([
+            connection.getTokenSupply(new web3_js_1.PublicKey(tokenAddress)),
+            connection.getParsedTokenAccountsByOwner(new web3_js_1.PublicKey(founderAddress), {
+                mint: new web3_js_1.PublicKey(tokenAddress)
+            }),
+            fetchTokenHoldersFromHelius(tokenAddress) // Use new Helius function
+        ]);
+        const founderBalance = ((_a = founderAccount.value[0]) === null || _a === void 0 ? void 0 : _a.account.data.parsed.info.tokenAmount.uiAmount) || 0;
+        const responseData = {
+            price: ((_b = cache.data) === null || _b === void 0 ? void 0 : _b.price) || 0, // Keep last known price if available
+            totalSupply: (_c = tokenSupply.value.uiAmount) !== null && _c !== void 0 ? _c : 0,
+            founderBalance,
+            holders: holdersCount,
+            lastUpdated: new Date().toISOString()
+        };
+        console.log('[API] Data fetched successfully:', responseData);
+        cache.data = responseData;
+        cache.timestamp = now;
+        return res.json({
+            ...responseData,
+            cached: false
+        });
     }
     catch (error) {
-        console.error('[API] Error in token stats endpoint:', {
-            error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined
-        });
-        res.status(500).json({
-            error: 'Failed to fetch token stats',
-            message: error instanceof Error ? error.message : 'Unknown error'
-        });
+        console.error('[API] Error:', error);
+        if (cache.data) {
+            return res.json({
+                ...cache.data,
+                cached: true,
+                error: 'Failed to fetch fresh data'
+            });
+        }
+        return res.status(500).json({ error: 'Failed to fetch token stats' });
     }
 });
 // Health check endpoint

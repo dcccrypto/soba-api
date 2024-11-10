@@ -7,6 +7,13 @@ import { Options } from 'express-rate-limit';
 import { RateLimiter } from 'limiter';
 import fetch from 'node-fetch';
 
+// Add type assertion for fetch
+declare global {
+  interface GlobalFetch {
+    fetch: typeof fetch;
+  }
+}
+
 // Add logger middleware
 const logger = (req: Request, res: Response, next: Function) => {
   const start = Date.now();
@@ -222,6 +229,10 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
           },
         }),
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
       const data = await response.json() as HeliusResponse;
 
