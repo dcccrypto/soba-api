@@ -4,6 +4,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { TokenStats } from './types/index.js';
+import fs from 'fs';
 
 // Configuration
 const SOLANA_RPC_ENDPOINT = process.env.SOLANA_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
@@ -103,7 +104,7 @@ async function fetchFounderBalance(): Promise<number> {
 async function getTokenHolderCount(): Promise<number> {
   try {
     let page = 1;
-    let totalHolders = 0;
+    const uniqueOwners = new Set<string>();
     let totalAccounts = 0;
 
     while (true) {
@@ -127,15 +128,15 @@ async function getTokenHolderCount(): Promise<number> {
       const accounts = response.data.result.token_accounts;
       totalAccounts += accounts.length;
       
-      // Count all accounts with any balance as holders
+      // Add all owners to the Set
       accounts.forEach((account: any) => {
-        if (account.token_amount && Number(account.token_amount.amount) > 0) {
-          totalHolders++;
-          console.log(`[Holders] Found holder with balance: ${account.token_amount.ui_amount}`);
+        if (account.owner) {
+          uniqueOwners.add(account.owner);
+          console.log(`[Holders] Found holder: ${account.owner}`);
         }
       });
 
-      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${totalHolders} holders with balance`);
+      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${uniqueOwners.size} unique holders so far`);
       
       if (accounts.length < 1000) {
         break;
@@ -143,11 +144,19 @@ async function getTokenHolderCount(): Promise<number> {
       page++;
     }
 
+    // Save holders to file for debugging
+    const holdersArray = Array.from(uniqueOwners);
+    fs.writeFileSync(
+      'token_holders.json',
+      JSON.stringify(holdersArray, null, 2)
+    );
+
     console.log('[Holders] Final stats:');
     console.log(`- Total accounts scanned: ${totalAccounts}`);
-    console.log(`- Total accounts with balance: ${totalHolders}`);
+    console.log(`- Total unique holders: ${uniqueOwners.size}`);
+    console.log(`- Holders saved to token_holders.json`);
     
-    return totalHolders;
+    return uniqueOwners.size;
   } catch (error) {
     console.error('[Holders Error] Fetching holder count:', error instanceof Error ? error.message : 'Unknown error');
     if (axios.isAxiosError(error) && error.response) {
