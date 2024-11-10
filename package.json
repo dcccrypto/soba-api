@@ -12,9 +12,9 @@
     "node": "18.x"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.95.4",
+    "@solana/web3.js": "^1.87.6",
     "@types/helmet": "^0.0.48",
-    "axios": "^1.7.7",
+    "axios": "^1.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "exponential-backoff": "^3.1.1",
