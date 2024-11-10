@@ -23,6 +23,20 @@ interface Cache {
   TTL: number;
 }
 
+interface HeliusTokenAccount {
+  owner: string;
+  account: string;
+  amount: string;
+}
+
+interface HeliusResponse {
+  jsonrpc: string;
+  result?: {
+    token_accounts: HeliusTokenAccount[];
+  };
+  id: string;
+}
+
 // Setup
 const app = express();
 const port = process.env.PORT || 3001;
@@ -105,13 +119,13 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as HeliusResponse;
 
       if (!data.result?.token_accounts || data.result.token_accounts.length === 0) {
         break;
       }
 
-      data.result.token_accounts.forEach((account: any) => 
+      data.result.token_accounts.forEach((account: HeliusTokenAccount) => 
         uniqueOwners.add(account.owner)
       );
 
