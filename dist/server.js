@@ -3,8 +3,7 @@ import { corsConfig } from './middleware/cors.js';
 import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
-import pkg from 'limiter';
-const { RateLimiter } = pkg;
+import { RateLimiter } from 'limiter/dist/esm/RateLimiter.js';
 import fetch from 'node-fetch';
 // Add logger middleware with correct Response type from express
 const logger = (req, res, next) => {
