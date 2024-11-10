@@ -5,7 +5,6 @@ import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
 import fetch from 'node-fetch';
-import { RateLimiter } from 'limiter';
 
 // Add type assertion for fetch
 declare global {
@@ -182,11 +181,32 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
-// Update the rate limiter initialization
-const holdersRateLimiter = new RateLimiter({
-  tokensPerInterval: 1,
-  interval: "second"
-});
+// Add this class at the top of the file after the imports
+class ApiRateLimiter {
+  private timestamps: number[] = [];
+  private readonly limit: number;
+  private readonly interval: number;
+
+  constructor(limit: number, interval: number) {
+    this.limit = limit;
+    this.interval = interval;
+  }
+
+  canMakeRequest(): boolean {
+    const now = Date.now();
+    this.timestamps = this.timestamps.filter(time => now - time < this.interval);
+    
+    if (this.timestamps.length >= this.limit) {
+      return false;
+    }
+    
+    this.timestamps.push(now);
+    return true;
+  }
+}
+
+// Replace the holdersRateLimiter initialization (around line 185) with this:
+const holdersRateLimiter = new ApiRateLimiter(2, 1000); // 2 requests per second
 
 // Add Helius configuration
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
@@ -215,6 +235,12 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
     const uniqueOwners = new Set<string>();
 
     while (true) {
+      if (!holdersRateLimiter.canMakeRequest()) {
+        console.log('[Rate Limiter] Waiting for next available slot...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
+      }
+
       const response = await fetch(HELIUS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -330,6 +356,16 @@ app.get('/api/token-stats', async (_req: express.Request, res: express.Response)
 // Health check endpoint
 app.get('/health', (_req: express.Request, res: express.Response) => {
   res.json({ status: 'ok' });
+});
+
+// Add error handling middleware
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error('[Error]', err);
+  res.status(500).json({
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message
+  });
 });
 
 app.listen(port, () => {
