@@ -103,7 +103,7 @@ async function fetchFounderBalance(): Promise<number> {
 async function getTokenHolderCount(): Promise<number> {
   try {
     let page = 1;
-    const uniqueOwners = new Set();
+    let totalHolders = 0;
     let totalAccounts = 0;
 
     while (true) {
@@ -127,13 +127,14 @@ async function getTokenHolderCount(): Promise<number> {
       const accounts = response.data.result.token_accounts;
       totalAccounts += accounts.length;
       
+      // Count all accounts with positive balance
       accounts.forEach((account: any) => {
-        if (account.owner && account.token_amount && account.token_amount.ui_amount > 0) {
-          uniqueOwners.add(account.owner);
+        if (account.token_amount && account.token_amount.ui_amount > 0) {
+          totalHolders++;
         }
       });
 
-      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${uniqueOwners.size} unique holders so far`);
+      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${totalHolders} total holders so far`);
       
       if (accounts.length < 1000) {
         break;
@@ -143,9 +144,9 @@ async function getTokenHolderCount(): Promise<number> {
 
     console.log('[Holders] Final stats:');
     console.log(`- Total accounts processed: ${totalAccounts}`);
-    console.log(`- Total unique holders: ${uniqueOwners.size}`);
+    console.log(`- Total holders: ${totalHolders}`);
     
-    return uniqueOwners.size;
+    return totalHolders;
   } catch (error) {
     console.error('[Holders Error] Fetching holder count:', error instanceof Error ? error.message : 'Unknown error');
     if (axios.isAxiosError(error) && error.response) {
