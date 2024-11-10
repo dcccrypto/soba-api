@@ -4,7 +4,8 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
-import { RateLimiter } from 'limiter';
+import pkg from 'limiter';
+const { RateLimiter } = pkg;
 import fetch from 'node-fetch';
 
 // Add type assertion for fetch
