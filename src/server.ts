@@ -165,24 +165,37 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
-// Add function to fetch holders
-async function fetchTokenHolders(tokenAddress: string) {
+// Update the fetchTokenHolders function to use proper method
+async function fetchTokenHolders(connection: Connection, tokenAddress: string): Promise<number> {
   try {
     console.log('[API] Fetching token holders...');
-    const response = await axiosWithRetry.get(
-      `https://data.solanatracker.io/holders?token=${tokenAddress}`,
+    const tokenKey = new PublicKey(tokenAddress);
+    
+    // Get all token accounts for this mint
+    const accounts = await connection.getParsedProgramAccounts(
+      new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'), // Token program ID
       {
-        headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-        retry: 3,
-        retryDelay: 1000,
-        timeout: 5000
-      } as RetryConfig
+        filters: [
+          {
+            dataSize: 165, // Size of token account
+          },
+          {
+            memcmp: {
+              offset: 0,
+              bytes: tokenKey.toBase58(),
+            },
+          },
+        ],
+      }
     );
-    console.log('[API] Holders fetched successfully:', response.data);
-    return response.data.holders;
+
+    // Count all accounts, regardless of balance
+    const totalHolders = accounts.length;
+    console.log('[API] Total holders fetched successfully:', totalHolders);
+    return totalHolders;
   } catch (error) {
     console.error('[API] Error fetching holders:', error);
-    return 0; // Return 0 as fallback
+    return 0;
   }
 }
 
@@ -206,9 +219,7 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
     const founderAddress = process.env.FOUNDER_ADDRESS;
 
     if (!tokenAddress || !founderAddress) {
-      const error = new Error('Missing required environment variables');
-      console.error('[API] Configuration error:', error);
-      throw error;
+      throw new Error('Missing required environment variables');
     }
 
     console.log('[API] Fetching data from multiple sources...');
@@ -222,30 +233,11 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
             retryDelay: 1000,
             timeout: 5000
           } as RetryConfig
-        ).catch(error => {
-          console.error('[API] Price fetch failed:', error);
-          throw new Error('Failed to fetch price data');
-        }),
-        connection.getTokenSupply(new PublicKey(tokenAddress))
-          .catch(error => {
-            console.error('[API] Supply fetch failed:', error);
-            throw new Error('Failed to fetch supply data');
-          }),
-        fetchFounderBalance(connection, founderAddress, tokenAddress)
-          .catch(error => {
-            console.error('[API] Balance fetch failed:', error);
-            throw new Error('Failed to fetch founder balance');
-          }),
-        fetchTokenHolders(tokenAddress)
+        ),
+        connection.getTokenSupply(new PublicKey(tokenAddress)),
+        fetchFounderBalance(connection, founderAddress, tokenAddress),
+        fetchTokenHolders(connection, tokenAddress) // Updated to use connection
       ]);
-
-      console.log('[API] Data fetched successfully:', {
-        price: priceData.data.price,
-        totalSupply: supplyData.value.uiAmount,
-        founderBalance,
-        holders,
-        timestamp: new Date().toISOString()
-      });
 
       const responseData: CacheData = {
         price: priceData.data.price || 0,
@@ -255,6 +247,8 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
         lastUpdated: new Date().toISOString()
       };
 
+      console.log('[API] Data fetched successfully:', responseData);
+      
       cache.data = responseData;
       cache.timestamp = now;
       console.log('[Cache] Cache updated');
@@ -268,17 +262,10 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
       throw error;
     }
   } catch (error) {
-    console.error('[API] Error in token stats endpoint:', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    
+    console.error('[API] Error in token stats endpoint:', error);
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
-      message: error instanceof Error ? error.message : 'Unknown error',
-      details: process.env.NODE_ENV === 'development' ? 
-        error instanceof Error ? error.stack : String(error) : 
-        undefined
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
