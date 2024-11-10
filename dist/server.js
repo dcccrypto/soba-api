@@ -4,8 +4,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import fetch from 'node-fetch';
-import pkg from 'limiter';
-const { RateLimiter } = pkg;
+import { RateLimiter } from 'limiter/dist/esm/RateLimiter.js';
 // Add logger middleware with correct Response type from express
 const logger = (req, res, next) => {
     const start = Date.now();

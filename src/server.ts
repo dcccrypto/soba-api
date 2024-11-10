@@ -5,8 +5,7 @@ import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
 import fetch from 'node-fetch';
-import pkg from 'limiter';
-const { RateLimiter } = pkg;
+import { RateLimiter } from 'limiter/dist/esm/RateLimiter.js';
 
 // Add type assertion for fetch
 declare global {
