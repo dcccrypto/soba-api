@@ -8,13 +8,22 @@ import { TokenStats } from './types/index.js';
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Trust proxy - required for Heroku
+app.set('trust proxy', 1);
+
 // Apply CORS before other middleware
 app.use(corsConfig);
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 60 // 60 requests per minute
+  max: 60, // 60 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Ensure consistent rate limiting in Heroku's proxy setup
+  keyGenerator: (req) => {
+    return req.ip || req.headers['x-forwarded-for'] as string || '127.0.0.1';
+  }
 });
 
 app.use(limiter);
