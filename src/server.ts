@@ -5,6 +5,7 @@ import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
 import { RateLimiter } from 'limiter';
+import fetch from 'node-fetch';
 
 // Add logger middleware
 const logger = (req: Request, res: Response, next: Function) => {
@@ -180,30 +181,68 @@ const holdersRateLimiter = new RateLimiter({
   interval: "second"
 });
 
-// Add this helper function to get token holders count
-async function fetchTokenHoldersFromRPC(connection: Connection, tokenAddress: string): Promise<number> {
-  try {
-    console.log('[API] Fetching token holders from Solana RPC...');
-    
-    const tokenAccounts = await connection.getParsedProgramAccounts(
-      new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'), // Token Program ID
-      {
-        filters: [
-          {
-            memcmp: {
-              offset: 0,
-              bytes: tokenAddress,
-            },
-          },
-        ],
-      }
-    );
+// Add Helius configuration
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
-    const holderCount = tokenAccounts.length;
-    console.log('[API] Holders count calculated:', holderCount);
+// Add interface for Helius API response
+interface HeliusTokenAccount {
+  owner: string;
+  account: string;
+  amount: string;
+}
+
+interface HeliusResponse {
+  jsonrpc: string;
+  result: {
+    token_accounts: HeliusTokenAccount[];
+  };
+  id: string;
+}
+
+// Update the token holders fetch function with proper typing
+async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number> {
+  try {
+    console.log('[API] Fetching token holders from Helius...');
+    let page = 1;
+    const uniqueOwners = new Set<string>();
+
+    while (true) {
+      const response = await fetch(HELIUS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'getTokenAccounts',
+          id: 'helius-holders',
+          params: {
+            page: page,
+            limit: 1000,
+            mint: tokenAddress,
+          },
+        }),
+      });
+
+      const data = await response.json() as HeliusResponse;
+
+      if (!data.result?.token_accounts || data.result.token_accounts.length === 0) {
+        console.log(`[API] Completed fetching holders. Total pages: ${page - 1}`);
+        break;
+      }
+
+      console.log(`[API] Processing holders from page ${page}`);
+      data.result.token_accounts.forEach((account) => 
+        uniqueOwners.add(account.owner)
+      );
+
+      page++;
+    }
+
+    const holderCount = uniqueOwners.size;
+    console.log('[API] Total unique holders:', holderCount);
     return holderCount;
   } catch (error) {
-    console.error('[API] Error fetching token holders:', error);
+    console.error('[API] Error fetching token holders from Helius:', error);
     throw error;
   }
 }
@@ -231,13 +270,13 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
       throw new Error('Missing required environment variables');
     }
 
-    // Fetch all data using Solana RPC
+    // Fetch all data using both Solana RPC and Helius
     const [tokenSupply, founderAccount, holdersCount] = await Promise.all([
       connection.getTokenSupply(new PublicKey(tokenAddress)),
       connection.getParsedTokenAccountsByOwner(new PublicKey(founderAddress), {
         mint: new PublicKey(tokenAddress)
       }),
-      fetchTokenHoldersFromRPC(connection, tokenAddress)
+      fetchTokenHoldersFromHelius(tokenAddress) // Use new Helius function
     ]);
 
     const founderBalance = founderAccount.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
