@@ -22,7 +22,8 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^8.0.0",
     "limiter": "^2.1.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "@types/node-fetch": "^2.6.11"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
