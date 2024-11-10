@@ -165,34 +165,46 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
-// Update the fetchTokenHolders function to use Solana Tracker API
+// Update the fetchTokenHolders function with the correct endpoint
 async function fetchTokenHolders(tokenAddress: string): Promise<number> {
   try {
     console.log('[API] Fetching token holders from Solana Tracker...');
     const response = await axiosWithRetry.get(
-      `https://data.solanatracker.io/holders?token=${tokenAddress}`,
+      `https://data.solanatracker.io/tokens/${tokenAddress}/holders`,
       {
-        headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+        headers: { 
+          'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
+          'Accept': 'application/json'
+        },
         retry: 3,
-        retryDelay: 1000,
-        timeout: 10000
+        retryDelay: 2000, // Increased delay between retries
+        timeout: 15000 // Increased timeout
       } as RetryConfig
     );
 
-    if (response.data && typeof response.data.holders === 'number') {
-      console.log('[API] Holders fetched successfully:', response.data.holders);
-      return response.data.holders;
+    if (response.data && Array.isArray(response.data)) {
+      const holderCount = response.data.length;
+      console.log('[API] Holders fetched successfully:', holderCount);
+      return holderCount;
     } else {
       console.warn('[API] Unexpected holders data format:', response.data);
       return 0;
     }
   } catch (error) {
-    console.error('[API] Error fetching holders:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('[API] Error fetching holders:', {
+        status: error.response?.status,
+        message: error.message,
+        data: error.response?.data
+      });
+    } else {
+      console.error('[API] Unknown error fetching holders:', error);
+    }
     return 0;
   }
 }
 
-// API Routes
+// Update the token-stats endpoint to handle the new holders data
 app.get('/api/token-stats', async (_req: Request, res: Response) => {
   console.log('[API] Received token stats request');
   try {
@@ -216,35 +228,45 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
 
     console.log('[API] Fetching data from Solana Tracker...');
     try {
-      const [priceData, holdersData] = await Promise.all([
+      // Fetch all data in parallel with proper error handling
+      const [priceResponse, holdersCount, supplyResponse] = await Promise.all([
         axiosWithRetry.get<{ price: number }>(
           `https://data.solanatracker.io/price?token=${tokenAddress}`,
           {
             headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
             retry: 3,
-            retryDelay: 1000,
-            timeout: 5000
+            retryDelay: 2000,
+            timeout: 10000
           } as RetryConfig
-        ),
-        fetchTokenHolders(tokenAddress)
+        ).catch(error => {
+          console.error('[API] Price fetch error:', error);
+          return { data: { price: 0 } };
+        }),
+        
+        fetchTokenHolders(tokenAddress).catch(error => {
+          console.error('[API] Holders fetch error:', error);
+          return 0;
+        }),
+        
+        axiosWithRetry.get<{ supply: number }>(
+          `https://data.solanatracker.io/supply?token=${tokenAddress}`,
+          {
+            headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+            retry: 3,
+            retryDelay: 2000,
+            timeout: 10000
+          } as RetryConfig
+        ).catch(error => {
+          console.error('[API] Supply fetch error:', error);
+          return { data: { supply: 996758135.0228987 } };
+        })
       ]);
 
-      // Get supply data from Solana Tracker as well
-      const supplyData = await axiosWithRetry.get<{ supply: number }>(
-        `https://data.solanatracker.io/supply?token=${tokenAddress}`,
-        {
-          headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-          retry: 3,
-          retryDelay: 1000,
-          timeout: 5000
-        } as RetryConfig
-      );
-
       const responseData: CacheData = {
-        price: priceData.data.price || 0,
-        totalSupply: supplyData.data.supply || 996758135.0228987, // Fallback to known supply if API fails
-        founderBalance: 260660000, // Hardcoded for now since we can't use RPC
-        holders: holdersData || 0,
+        price: priceResponse.data.price || 0,
+        totalSupply: supplyResponse.data.supply || 996758135.0228987,
+        founderBalance: 260660000,
+        holders: holdersCount,
         lastUpdated: new Date().toISOString()
       };
 
