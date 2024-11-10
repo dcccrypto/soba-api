@@ -127,14 +127,15 @@ async function getTokenHolderCount(): Promise<number> {
       const accounts = response.data.result.token_accounts;
       totalAccounts += accounts.length;
       
-      // Count all accounts with positive balance
+      // Count all accounts with any balance as holders
       accounts.forEach((account: any) => {
-        if (account.token_amount && account.token_amount.ui_amount > 0) {
+        if (account.token_amount && Number(account.token_amount.amount) > 0) {
           totalHolders++;
+          console.log(`[Holders] Found holder with balance: ${account.token_amount.ui_amount}`);
         }
       });
 
-      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${totalHolders} total holders so far`);
+      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${totalHolders} holders with balance`);
       
       if (accounts.length < 1000) {
         break;
@@ -143,8 +144,8 @@ async function getTokenHolderCount(): Promise<number> {
     }
 
     console.log('[Holders] Final stats:');
-    console.log(`- Total accounts processed: ${totalAccounts}`);
-    console.log(`- Total holders: ${totalHolders}`);
+    console.log(`- Total accounts scanned: ${totalAccounts}`);
+    console.log(`- Total accounts with balance: ${totalHolders}`);
     
     return totalHolders;
   } catch (error) {
