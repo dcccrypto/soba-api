@@ -17,6 +17,7 @@
     "axios": "^1.7.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
+    "exponential-backoff": "^3.1.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "helmet": "^8.0.0",
