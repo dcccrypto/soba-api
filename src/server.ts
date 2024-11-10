@@ -4,6 +4,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
+import { RateLimiter } from 'limiter';
 
 // Add logger middleware
 const logger = (req: Request, res: Response, next: Function) => {
@@ -165,65 +166,58 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
-// Update the fetchTokenHolders function to only get the count
+// Update the rate limiter initialization
+const holdersRateLimiter = new RateLimiter({
+  tokensPerInterval: 1,
+  interval: "second"
+});
+
+// Update the fetchTokenHolders function with proper rate limiting
 async function fetchTokenHolders(tokenAddress: string): Promise<number> {
   try {
-    console.log('[API] Fetching token holders count from Solana Tracker...');
+    console.log('[API] Fetching token holders from Solana Tracker...');
+    
+    // Wait for rate limit before making request
+    await holdersRateLimiter.removeTokens(1);
+
     const response = await axiosWithRetry.get(
-      `https://data.solanatracker.io/tokens/${tokenAddress}/holders/count`,
+      `https://data.solanatracker.io/tokens/${tokenAddress}/holders`,
       {
         headers: { 
           'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
           'Accept': 'application/json'
         },
-        retry: 3,
-        retryDelay: 2000,
+        retry: 2,
+        retryDelay: 1100,
         timeout: 15000
       } as RetryConfig
     );
 
-    if (response.data && typeof response.data.count === 'number') {
-      console.log('[API] Holders count fetched successfully:', response.data.count);
-      return response.data.count;
-    } else {
-      // Fallback to counting array length if the count endpoint doesn't exist
-      const holdersResponse = await axiosWithRetry.get(
-        `https://data.solanatracker.io/tokens/${tokenAddress}/holders`,
-        {
-          headers: { 
-            'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
-            'Accept': 'application/json'
-          },
-          retry: 3,
-          retryDelay: 2000,
-          timeout: 15000
-        } as RetryConfig
-      );
-
-      if (Array.isArray(holdersResponse.data)) {
-        const holderCount = holdersResponse.data.length;
-        console.log('[API] Holders count calculated from list:', holderCount);
-        return holderCount;
-      }
-
-      console.warn('[API] Unexpected holders data format:', response.data);
-      return 0;
+    if (response.data && Array.isArray(response.data)) {
+      const holderCount = response.data.length;
+      console.log('[API] Holders count calculated:', holderCount);
+      return holderCount;
     }
+
+    console.warn('[API] Unexpected holders data format:', response.data);
+    return 0;
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('[API] Error fetching holders count:', {
-        status: error.response?.status,
-        message: error.message,
-        data: error.response?.data
-      });
-    } else {
-      console.error('[API] Unknown error fetching holders count:', error);
+    if (axios.isAxiosError(error) && error.response?.status === 429) {
+      console.error('[API] Rate limit exceeded for holders endpoint. Retrying after delay...');
+      // Wait for 1.1 seconds before retrying
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      return fetchTokenHolders(tokenAddress); // Retry once
     }
+
+    console.error('[API] Error fetching holders:', {
+      status: axios.isAxiosError(error) ? error.response?.status : undefined,
+      message: error instanceof Error ? error.message : String(error)
+    });
     return 0;
   }
 }
 
-// Update the token-stats endpoint to handle the new holders data
+// Update the token-stats endpoint to handle rate limits better
 app.get('/api/token-stats', async (_req: Request, res: Response) => {
   console.log('[API] Received token stats request');
   try {
@@ -245,41 +239,45 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
       throw new Error('Missing required environment variables');
     }
 
-    console.log('[API] Fetching data from Solana Tracker...');
+    console.log('[API] Fetching data from multiple sources...');
     try {
-      // Fetch all data in parallel with proper error handling
-      const [priceResponse, holdersCount, supplyResponse] = await Promise.all([
-        axiosWithRetry.get<{ price: number }>(
-          `https://data.solanatracker.io/price?token=${tokenAddress}`,
-          {
-            headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-            retry: 3,
-            retryDelay: 2000,
-            timeout: 10000
-          } as RetryConfig
-        ).catch(error => {
-          console.error('[API] Price fetch error:', error);
-          return { data: { price: 0 } };
-        }),
-        
-        fetchTokenHolders(tokenAddress).catch(error => {
-          console.error('[API] Holders fetch error:', error);
-          return 0;
-        }),
-        
-        axiosWithRetry.get<{ supply: number }>(
-          `https://data.solanatracker.io/supply?token=${tokenAddress}`,
-          {
-            headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-            retry: 3,
-            retryDelay: 2000,
-            timeout: 10000
-          } as RetryConfig
-        ).catch(error => {
-          console.error('[API] Supply fetch error:', error);
-          return { data: { supply: 996758135.0228987 } };
-        })
-      ]);
+      // Sequential fetching for better rate limit handling
+      const priceResponse = await axiosWithRetry.get<{ price: number }>(
+        `https://data.solanatracker.io/price?token=${tokenAddress}`,
+        {
+          headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+          retry: 2,
+          retryDelay: 1100,
+          timeout: 10000
+        } as RetryConfig
+      ).catch(error => {
+        console.error('[API] Price fetch error:', error);
+        return { data: { price: 0 } };
+      });
+
+      // Wait briefly before next request
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const holdersCount = await fetchTokenHolders(tokenAddress).catch(error => {
+        console.error('[API] Holders fetch error:', error);
+        return 0;
+      });
+
+      // Wait briefly before next request
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const supplyResponse = await axiosWithRetry.get<{ supply: number }>(
+        `https://data.solanatracker.io/supply?token=${tokenAddress}`,
+        {
+          headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+          retry: 2,
+          retryDelay: 1100,
+          timeout: 10000
+        } as RetryConfig
+      ).catch(error => {
+        console.error('[API] Supply fetch error:', error);
+        return { data: { supply: 996758135.0228987 } };
+      });
 
       const responseData: CacheData = {
         price: priceResponse.data.price || 0,
