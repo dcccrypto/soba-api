@@ -1,16 +1,11 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = __importDefault(require("express"));
-const cors_1 = require("./middleware/cors");
-const web3_js_1 = require("@solana/web3.js");
-const axios_1 = __importDefault(require("axios"));
-const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
-const limiter_1 = require("limiter");
-const node_fetch_1 = __importDefault(require("node-fetch"));
-// Add logger middleware
+import express from 'express';
+import { corsConfig } from './middleware/cors.js';
+import { Connection, PublicKey } from '@solana/web3.js';
+import axios from 'axios';
+import rateLimit from 'express-rate-limit';
+import { RateLimiter } from 'limiter';
+import fetch from 'node-fetch';
+// Add logger middleware with correct Response type from express
 const logger = (req, res, next) => {
     const start = Date.now();
     res.on('finish', () => {
@@ -19,14 +14,14 @@ const logger = (req, res, next) => {
     });
     next();
 };
-const app = (0, express_1.default)();
+const app = express();
 const port = process.env.PORT || 3001;
-// Add logger middleware
-app.use(logger);
+// Fix logger middleware application
+app.use((req, res, next) => logger(req, res, next));
 // Trust proxy - required for Heroku
 app.set('trust proxy', 1);
 // Configure CORS with the imported config
-app.use(cors_1.corsConfig);
+app.use(corsConfig);
 // Rate limiting with proxy support
 const limiterOptions = {
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -51,10 +46,10 @@ const limiterOptions = {
         });
     }
 };
-const limiter = (0, express_rate_limit_1.default)(limiterOptions);
+const limiter = rateLimit(limiterOptions);
 app.use(limiter);
 // Add retry logic for external API calls
-const axiosWithRetry = axios_1.default.create({
+const axiosWithRetry = axios.create({
     timeout: 10000,
 });
 // Cache implementation with proper typing
@@ -64,11 +59,10 @@ const cache = {
     TTL: 30000
 };
 axiosWithRetry.interceptors.response.use(undefined, async (err) => {
-    var _a;
     const config = err.config;
     console.log(`[Axios] Request failed: ${err.message}`);
-    console.log(`[Axios] URL: ${config === null || config === void 0 ? void 0 : config.url}`);
-    console.log(`[Axios] Status: ${(_a = err.response) === null || _a === void 0 ? void 0 : _a.status}`);
+    console.log(`[Axios] URL: ${config?.url}`);
+    console.log(`[Axios] Status: ${err.response?.status}`);
     if (!config || typeof config.retry === 'undefined') {
         console.log('[Axios] No retry configuration, rejecting');
         return Promise.reject(err);
@@ -110,7 +104,7 @@ const getWorkingConnection = async () => {
         const endpoint = RPC_ENDPOINTS[currentRpcIndex];
         try {
             console.log(`[RPC] Trying endpoint: ${endpoint}`);
-            const connection = new web3_js_1.Connection(endpoint, 'confirmed');
+            const connection = new Connection(endpoint, 'confirmed');
             await connection.getSlot(); // Test the connection
             solanaConnection = connection;
             console.log(`[RPC] Successfully connected to: ${endpoint}`);
@@ -123,22 +117,21 @@ const getWorkingConnection = async () => {
     throw new Error('Unable to connect to any Solana RPC endpoint');
 };
 async function fetchFounderBalance(connection, founderAddress, tokenAddress) {
-    var _a;
-    const walletPublicKey = new web3_js_1.PublicKey(founderAddress);
+    const walletPublicKey = new PublicKey(founderAddress);
     const tokenAccounts = await connection.getTokenAccountsByOwner(walletPublicKey, {
-        mint: new web3_js_1.PublicKey(tokenAddress),
+        mint: new PublicKey(tokenAddress),
     });
     let totalBalance = 0;
     for (const account of tokenAccounts.value) {
         const accountInfo = await connection.getParsedAccountInfo(account.pubkey);
-        if (((_a = accountInfo.value) === null || _a === void 0 ? void 0 : _a.data) && 'parsed' in accountInfo.value.data) {
+        if (accountInfo.value?.data && 'parsed' in accountInfo.value.data) {
             totalBalance += accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0;
         }
     }
     return totalBalance;
 }
 // Update the rate limiter initialization
-const holdersRateLimiter = new limiter_1.RateLimiter({
+const holdersRateLimiter = new RateLimiter({
     tokensPerInterval: 1,
     interval: "second"
 });
@@ -147,13 +140,12 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 // Update the token holders fetch function with proper typing
 async function fetchTokenHoldersFromHelius(tokenAddress) {
-    var _a;
     try {
         console.log('[API] Fetching token holders from Helius...');
         let page = 1;
         const uniqueOwners = new Set();
         while (true) {
-            const response = await (0, node_fetch_1.default)(HELIUS_URL, {
+            const response = await fetch(HELIUS_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -171,7 +163,7 @@ async function fetchTokenHoldersFromHelius(tokenAddress) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const data = await response.json();
-            if (!((_a = data.result) === null || _a === void 0 ? void 0 : _a.token_accounts) || data.result.token_accounts.length === 0) {
+            if (!data.result?.token_accounts || data.result.token_accounts.length === 0) {
                 console.log(`[API] Completed fetching holders. Total pages: ${page - 1}`);
                 break;
             }
@@ -190,17 +182,17 @@ async function fetchTokenHoldersFromHelius(tokenAddress) {
 }
 // Update the token-stats endpoint
 app.get('/api/token-stats', async (_req, res) => {
-    var _a, _b, _c;
     console.log('[API] Received token stats request');
     try {
         const now = Date.now();
         if (cache.data && (now - cache.timestamp) < cache.TTL) {
             console.log('[Cache] Returning cached data');
-            return res.json({
+            res.json({
                 ...cache.data,
                 cached: true,
                 cacheAge: now - cache.timestamp
             });
+            return;
         }
         console.log('[Cache] Cache miss, fetching fresh data');
         const connection = await getWorkingConnection();
@@ -211,16 +203,16 @@ app.get('/api/token-stats', async (_req, res) => {
         }
         // Fetch all data using both Solana RPC and Helius
         const [tokenSupply, founderAccount, holdersCount] = await Promise.all([
-            connection.getTokenSupply(new web3_js_1.PublicKey(tokenAddress)),
-            connection.getParsedTokenAccountsByOwner(new web3_js_1.PublicKey(founderAddress), {
-                mint: new web3_js_1.PublicKey(tokenAddress)
+            connection.getTokenSupply(new PublicKey(tokenAddress)),
+            connection.getParsedTokenAccountsByOwner(new PublicKey(founderAddress), {
+                mint: new PublicKey(tokenAddress)
             }),
             fetchTokenHoldersFromHelius(tokenAddress) // Use new Helius function
         ]);
-        const founderBalance = ((_a = founderAccount.value[0]) === null || _a === void 0 ? void 0 : _a.account.data.parsed.info.tokenAmount.uiAmount) || 0;
+        const founderBalance = founderAccount.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
         const responseData = {
-            price: ((_b = cache.data) === null || _b === void 0 ? void 0 : _b.price) || 0, // Keep last known price if available
-            totalSupply: (_c = tokenSupply.value.uiAmount) !== null && _c !== void 0 ? _c : 0,
+            price: cache.data?.price || 0, // Keep last known price if available
+            totalSupply: tokenSupply.value.uiAmount ?? 0,
             founderBalance,
             holders: holdersCount,
             lastUpdated: new Date().toISOString()
@@ -228,21 +220,24 @@ app.get('/api/token-stats', async (_req, res) => {
         console.log('[API] Data fetched successfully:', responseData);
         cache.data = responseData;
         cache.timestamp = now;
-        return res.json({
+        res.json({
             ...responseData,
             cached: false
         });
+        return;
     }
     catch (error) {
         console.error('[API] Error:', error);
         if (cache.data) {
-            return res.json({
+            res.json({
                 ...cache.data,
                 cached: true,
                 error: 'Failed to fetch fresh data'
             });
+            return;
         }
-        return res.status(500).json({ error: 'Failed to fetch token stats' });
+        res.status(500).json({ error: 'Failed to fetch token stats' });
+        return;
     }
 });
 // Health check endpoint
@@ -252,4 +247,3 @@ app.get('/health', (_req, res) => {
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
-exports.default = app;

@@ -2,10 +2,11 @@
   "name": "bosa-backend",
   "version": "1.0.0",
   "main": "dist/server.js",
+  "type": "module",
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "node --experimental-specifier-resolution=node dist/server.js",
     "build": "tsc",
-    "dev": "ts-node-dev src/server.ts",
+    "dev": "ts-node-dev --esm src/server.ts",
     "postinstall": "npm run build"
   },
   "engines": {
@@ -30,6 +31,5 @@
   },
   "devDependencies": {
     "ts-node-dev": "^2.0.0"
-  },
-  "type": "module"
+  }
 }

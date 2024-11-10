@@ -1,5 +1,5 @@
-import express, { Request, Response } from 'express';
-import { corsConfig } from './middleware/cors';
+import express, { Request, Response, NextFunction } from 'express';
+import { corsConfig } from './middleware/cors.js';
 import { Connection, PublicKey } from '@solana/web3.js';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
@@ -14,8 +14,8 @@ declare global {
   }
 }
 
-// Add logger middleware
-const logger = (req: Request, res: Response, next: Function) => {
+// Add logger middleware with correct Response type from express
+const logger = (req: Request, res: express.Response, next: NextFunction) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
@@ -48,8 +48,8 @@ interface Cache {
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Add logger middleware
-app.use(logger);
+// Fix logger middleware application
+app.use((req: Request, res: Response, next: NextFunction) => logger(req, res, next));
 
 // Trust proxy - required for Heroku
 app.set('trust proxy', 1);
@@ -259,17 +259,18 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
 }
 
 // Update the token-stats endpoint
-app.get('/api/token-stats', async (_req: Request, res: Response) => {
+app.get('/api/token-stats', async (_req: express.Request, res: express.Response) => {
   console.log('[API] Received token stats request');
   try {
     const now = Date.now();
     if (cache.data && (now - cache.timestamp) < cache.TTL) {
       console.log('[Cache] Returning cached data');
-      return res.json({
+      res.json({
         ...cache.data,
         cached: true,
         cacheAge: now - cache.timestamp
       });
+      return;
     }
 
     console.log('[Cache] Cache miss, fetching fresh data');
@@ -305,31 +306,32 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
     cache.data = responseData;
     cache.timestamp = now;
 
-    return res.json({
+    res.json({
       ...responseData,
       cached: false
     });
+    return;
 
   } catch (error) {
     console.error('[API] Error:', error);
     if (cache.data) {
-      return res.json({
+      res.json({
         ...cache.data,
         cached: true,
         error: 'Failed to fetch fresh data'
       });
+      return;
     }
-    return res.status(500).json({ error: 'Failed to fetch token stats' });
+    res.status(500).json({ error: 'Failed to fetch token stats' });
+    return;
   }
 });
 
 // Health check endpoint
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', (_req: express.Request, res: express.Response) => {
   res.json({ status: 'ok' });
 });
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-});
-
-export default app; 
+}); 
