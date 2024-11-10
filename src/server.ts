@@ -9,7 +9,7 @@ import { TokenStats } from './types/index.js';
 const SOLANA_RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
 const SOLANA_TRACKER_API_KEY = '01221e00-46a1-42e1-b08d-d0541891b441';
 const HELIUS_API_KEY = 'e568033d-06d6-49d1-ba90-b3564c91851b';
-const TOKEN_ADDRESS = '25p2BoNp6qrJH5As6ek6H7Ei495oSkyZd3tGb97sqFmH';
+const TOKEN_ADDRESS = '26wx2UwenfvTS8vTrpysPdtDLyCfu47uJ44CpEpD1AQG';
 const FOUNDER_WALLET = 'D2y4sbmBuSjLU1hfrZbBCaveCHjk952c9VsGwfxnNNNH';
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
