@@ -26,6 +26,7 @@ interface CacheData {
   price: number;
   totalSupply: number;
   founderBalance: number;
+  holders: number;
   lastUpdated: string;
 }
 
@@ -164,6 +165,27 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
+// Add function to fetch holders
+async function fetchTokenHolders(tokenAddress: string) {
+  try {
+    console.log('[API] Fetching token holders...');
+    const response = await axiosWithRetry.get(
+      `https://data.solanatracker.io/holders?token=${tokenAddress}`,
+      {
+        headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+        retry: 3,
+        retryDelay: 1000,
+        timeout: 5000
+      } as RetryConfig
+    );
+    console.log('[API] Holders fetched successfully:', response.data);
+    return response.data.holders;
+  } catch (error) {
+    console.error('[API] Error fetching holders:', error);
+    return 0; // Return 0 as fallback
+  }
+}
+
 // API Routes
 app.get('/api/token-stats', async (_req: Request, res: Response) => {
   console.log('[API] Received token stats request');
@@ -191,14 +213,14 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
 
     console.log('[API] Fetching data from multiple sources...');
     try {
-      const [priceData, supplyData, founderBalance] = await Promise.all([
+      const [priceData, supplyData, founderBalance, holders] = await Promise.all([
         axiosWithRetry.get<{ price: number }>(
           `https://data.solanatracker.io/price?token=${tokenAddress}`,
           {
             headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
             retry: 3,
             retryDelay: 1000,
-            timeout: 5000 // Add timeout
+            timeout: 5000
           } as RetryConfig
         ).catch(error => {
           console.error('[API] Price fetch failed:', error);
@@ -213,13 +235,15 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
           .catch(error => {
             console.error('[API] Balance fetch failed:', error);
             throw new Error('Failed to fetch founder balance');
-          })
+          }),
+        fetchTokenHolders(tokenAddress)
       ]);
 
       console.log('[API] Data fetched successfully:', {
         price: priceData.data.price,
         totalSupply: supplyData.value.uiAmount,
         founderBalance,
+        holders,
         timestamp: new Date().toISOString()
       });
 
@@ -227,6 +251,7 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
         price: priceData.data.price || 0,
         totalSupply: supplyData.value.uiAmount || 0,
         founderBalance: founderBalance || 0,
+        holders: holders || 0,
         lastUpdated: new Date().toISOString()
       };
 
