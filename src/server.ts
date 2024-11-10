@@ -5,6 +5,16 @@ import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
 
+// Add logger middleware
+const logger = (req: Request, res: Response, next: Function) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
+  });
+  next();
+};
+
 // Extend AxiosRequestConfig to include retry properties
 interface RetryConfig extends AxiosRequestConfig {
   retry?: number;
@@ -28,6 +38,9 @@ interface Cache {
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Add logger middleware
+app.use(logger);
+
 // Trust proxy - required for Heroku
 app.set('trust proxy', 1);
 
@@ -42,13 +55,16 @@ const limiterOptions: Partial<Options> = {
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || 
-           (req.headers['x-forwarded-for'] as string) || 
-           req.socket.remoteAddress || 
-           'unknown';
+    const ip = req.ip || 
+               (req.headers['x-forwarded-for'] as string) || 
+               req.socket.remoteAddress || 
+               'unknown';
+    console.log(`[Rate Limiter] Request from IP: ${ip}`);
+    return ip;
   },
   skip: (req) => false, // Replace skipFailedRequests
   handler: (req, res) => {
+    console.log(`[Rate Limiter] Rate limit exceeded for IP: ${req.ip}`);
     res.status(429).json({
       error: 'Too many requests, please try again later.',
       retryAfter: Math.ceil(15 * 60) // 15 minutes in seconds
@@ -74,13 +90,24 @@ const cache: Cache = {
 
 axiosWithRetry.interceptors.response.use(undefined, async (err: AxiosError) => {
   const config = err.config as RetryConfig;
+  console.log(`[Axios] Request failed: ${err.message}`);
+  console.log(`[Axios] URL: ${config?.url}`);
+  console.log(`[Axios] Status: ${err.response?.status}`);
+  
   if (!config || typeof config.retry === 'undefined') {
+    console.log('[Axios] No retry configuration, rejecting');
     return Promise.reject(err);
   }
+  
   config.retry--;
+  console.log(`[Axios] Retries left: ${config.retry}`);
+  
   if (config.retry < 0) {
+    console.log('[Axios] No more retries, rejecting');
     return Promise.reject(err);
   }
+  
+  console.log(`[Axios] Retrying in ${config.retryDelay || 1000}ms`);
   await new Promise(resolve => setTimeout(resolve, config.retryDelay || 1000));
   return axiosWithRetry(config);
 });
@@ -95,14 +122,16 @@ const RPC_ENDPOINTS = [
 const getWorkingConnection = async (): Promise<Connection> => {
   for (const endpoint of RPC_ENDPOINTS) {
     try {
+      console.log(`[Solana] Attempting to connect to ${endpoint}`);
       const connection = new Connection(endpoint, {
         commitment: 'confirmed',
         confirmTransactionInitialTimeout: 60000
       });
-      await connection.getSlot();
+      const slot = await connection.getSlot();
+      console.log(`[Solana] Successfully connected to ${endpoint} (slot: ${slot})`);
       return connection;
     } catch (error) {
-      console.warn(`Failed to connect to ${endpoint}, trying next...`);
+      console.error(`[Solana] Failed to connect to ${endpoint}:`, error);
     }
   }
   throw new Error('All RPC endpoints failed');
@@ -126,20 +155,25 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
 
 // API Routes
 app.get('/api/token-stats', async (_req: Request, res: Response) => {
+  console.log('[API] Received token stats request');
   try {
     const now = Date.now();
     if (cache.data && (now - cache.timestamp) < cache.TTL) {
+      console.log('[Cache] Returning cached data');
       return res.json(cache.data);
     }
 
+    console.log('[Cache] Cache miss, fetching fresh data');
     const connection = await getWorkingConnection();
     const tokenAddress = process.env.TOKEN_ADDRESS;
     const founderAddress = process.env.FOUNDER_ADDRESS;
 
     if (!tokenAddress || !founderAddress) {
+      console.error('[API] Missing environment variables');
       throw new Error('Missing required environment variables');
     }
 
+    console.log('[API] Fetching data from multiple sources...');
     const [priceData, supplyData, founderBalance] = await Promise.all([
       axiosWithRetry.get<{ price: number }>(`https://data.solanatracker.io/price?token=${tokenAddress}`, {
         headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
@@ -150,7 +184,12 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
       fetchFounderBalance(connection, founderAddress, tokenAddress)
     ]);
 
-    // Add null checks and provide default values
+    console.log('[API] Data fetched successfully:', {
+      price: priceData.data.price,
+      totalSupply: supplyData.value.uiAmount,
+      founderBalance
+    });
+
     const responseData: CacheData = {
       price: priceData.data.price || 0,
       totalSupply: supplyData.value.uiAmount || 0,
@@ -160,10 +199,11 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
 
     cache.data = responseData;
     cache.timestamp = now;
+    console.log('[Cache] Cache updated');
 
     res.json(responseData);
   } catch (error) {
-    console.error('Error fetching token stats:', error);
+    console.error('[API] Error in token stats endpoint:', error);
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
       details: process.env.NODE_ENV === 'development' ? 
