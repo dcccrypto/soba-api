@@ -3,6 +3,7 @@ import { corsConfig } from './middleware/cors';
 import { Connection, PublicKey } from '@solana/web3.js';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import rateLimit from 'express-rate-limit';
+import { Options } from 'express-rate-limit';
 
 // Extend AxiosRequestConfig to include retry properties
 interface RetryConfig extends AxiosRequestConfig {
@@ -27,17 +28,35 @@ interface Cache {
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Trust proxy - required for Heroku
+app.set('trust proxy', 1);
+
 // Configure CORS with the imported config
 app.use(corsConfig);
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: 'Too many requests, please try again later.',
+// Rate limiting with proxy support
+const limiterOptions: Partial<Options> = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 300, // Limit each IP to 300 requests per windowMs
+  message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-});
+  keyGenerator: (req) => {
+    return req.ip || 
+           (req.headers['x-forwarded-for'] as string) || 
+           req.socket.remoteAddress || 
+           'unknown';
+  },
+  skip: (req) => false, // Replace skipFailedRequests
+  handler: (req, res) => {
+    res.status(429).json({
+      error: 'Too many requests, please try again later.',
+      retryAfter: Math.ceil(15 * 60) // 15 minutes in seconds
+    });
+  }
+};
+
+const limiter = rateLimit(limiterOptions);
 
 app.use(limiter);
 
