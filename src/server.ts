@@ -1,35 +1,14 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { corsConfig } from './middleware/cors.js';
 import { Connection, PublicKey } from '@solana/web3.js';
-import axios, { AxiosError, AxiosRequestConfig } from 'axios';
+import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { Options } from 'express-rate-limit';
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// Add type assertion for fetch
-declare global {
-  interface GlobalFetch {
-    fetch: typeof fetch;
-  }
-}
-
-// Add logger middleware with correct Response type from express
-const logger = (req: Request, res: express.Response, next: NextFunction) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
-  });
-  next();
-};
-
-// Extend AxiosRequestConfig to include retry properties
-interface RetryConfig extends AxiosRequestConfig {
-  retry?: number;
-  retryDelay?: number;
-}
-
-// Update CacheData interface to handle nullable values
+// Interfaces
 interface CacheData {
   price: number;
   totalSupply: number;
@@ -44,203 +23,73 @@ interface Cache {
   TTL: number;
 }
 
+// Setup
 const app = express();
 const port = process.env.PORT || 3001;
+const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`;
+const connection = new Connection(HELIUS_URL);
 
-// Fix logger middleware application
-app.use((req: Request, res: Response, next: NextFunction) => logger(req, res, next));
+// Middleware
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode} (${duration}ms)`);
+  });
+  next();
+});
 
-// Trust proxy - required for Heroku
 app.set('trust proxy', 1);
-
-// Configure CORS with the imported config
 app.use(corsConfig);
 
-// Rate limiting with proxy support
-const limiterOptions: Partial<Options> = {
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 300, // Limit each IP to 300 requests per windowMs
-  message: { error: 'Too many requests, please try again later.' },
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    const ip = req.ip || 
-               (req.headers['x-forwarded-for'] as string) || 
-               req.socket.remoteAddress || 
-               'unknown';
-    console.log(`[Rate Limiter] Request from IP: ${ip}`);
-    return ip;
-  },
-  skip: (req) => false, // Replace skipFailedRequests
-  handler: (req, res) => {
-    console.log(`[Rate Limiter] Rate limit exceeded for IP: ${req.ip}`);
-    res.status(429).json({
-      error: 'Too many requests, please try again later.',
-      retryAfter: Math.ceil(15 * 60) // 15 minutes in seconds
-    });
-  }
-};
-
-const limiter = rateLimit(limiterOptions);
+});
 
 app.use(limiter);
 
-// Add retry logic for external API calls
-const axiosWithRetry = axios.create({
-  timeout: 10000,
-});
-
-// Cache implementation with proper typing
+// Cache setup
 const cache: Cache = {
   data: null,
   timestamp: 0,
-  TTL: 30000
+  TTL: 30000 // 30 seconds
 };
 
-axiosWithRetry.interceptors.response.use(undefined, async (err: AxiosError) => {
-  const config = err.config as RetryConfig;
-  console.log(`[Axios] Request failed: ${err.message}`);
-  console.log(`[Axios] URL: ${config?.url}`);
-  console.log(`[Axios] Status: ${err.response?.status}`);
-  
-  if (!config || typeof config.retry === 'undefined') {
-    console.log('[Axios] No retry configuration, rejecting');
-    return Promise.reject(err);
-  }
-  
-  config.retry--;
-  console.log(`[Axios] Retries left: ${config.retry}`);
-  
-  if (config.retry < 0) {
-    console.log('[Axios] No more retries, rejecting');
-    return Promise.reject(err);
-  }
-  
-  console.log(`[Axios] Retrying in ${config.retryDelay || 1000}ms`);
-  await new Promise(resolve => setTimeout(resolve, config.retryDelay || 1000));
-  return axiosWithRetry(config);
+// Solana Tracker client
+const apiClient = axios.create({
+  baseURL: 'https://data.solanatracker.io',
+  headers: {
+    'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
+  },
 });
 
-// Add RPC endpoints configuration
-const RPC_ENDPOINTS = [
-  'https://api.mainnet-beta.solana.com',
-  'https://solana-api.projectserum.com',
-  'https://rpc.ankr.com/solana',
-  process.env.CUSTOM_RPC_URL, // Add your custom RPC URL from env if available
-].filter(Boolean) as string[];
-
-// Add connection management
-let currentRpcIndex = 0;
-let solanaConnection: Connection | null = null;
-
-const getWorkingConnection = async (): Promise<Connection> => {
-  if (solanaConnection) {
-    try {
-      // Test if current connection is working
-      await solanaConnection.getSlot();
-      return solanaConnection;
-    } catch (error) {
-      console.log('[RPC] Current connection failed, trying next endpoint');
-    }
-  }
-
-  // Try each RPC endpoint until one works
-  for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
-    currentRpcIndex = (currentRpcIndex + 1) % RPC_ENDPOINTS.length;
-    const endpoint = RPC_ENDPOINTS[currentRpcIndex];
-    
-    try {
-      console.log(`[RPC] Trying endpoint: ${endpoint}`);
-      const connection = new Connection(endpoint, 'confirmed');
-      await connection.getSlot(); // Test the connection
-      
-      solanaConnection = connection;
-      console.log(`[RPC] Successfully connected to: ${endpoint}`);
-      return connection;
-    } catch (error) {
-      console.error(`[RPC] Failed to connect to ${endpoint}:`, error);
-    }
-  }
-
-  throw new Error('Unable to connect to any Solana RPC endpoint');
-};
-
-async function fetchFounderBalance(connection: Connection, founderAddress: string, tokenAddress: string): Promise<number> {
-  const walletPublicKey = new PublicKey(founderAddress);
-  const tokenAccounts = await connection.getTokenAccountsByOwner(walletPublicKey, {
-    mint: new PublicKey(tokenAddress),
-  });
-
-  let totalBalance = 0;
-  for (const account of tokenAccounts.value) {
-    const accountInfo = await connection.getParsedAccountInfo(account.pubkey);
-    if (accountInfo.value?.data && 'parsed' in accountInfo.value.data) {
-      totalBalance += accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0;
-    }
-  }
-  return totalBalance;
-}
-
-// Add this class at the top of the file after the imports
-class ApiRateLimiter {
-  private timestamps: number[] = [];
-  private readonly limit: number;
-  private readonly interval: number;
-
-  constructor(limit: number, interval: number) {
-    this.limit = limit;
-    this.interval = interval;
-  }
-
-  canMakeRequest(): boolean {
-    const now = Date.now();
-    this.timestamps = this.timestamps.filter(time => now - time < this.interval);
-    
-    if (this.timestamps.length >= this.limit) {
-      return false;
-    }
-    
-    this.timestamps.push(now);
-    return true;
+// Functions
+async function getTokenPrice(tokenAddress: string): Promise<number> {
+  try {
+    const response = await apiClient.get('/price', {
+      params: { token: tokenAddress }
+    });
+    return response.data.price || 0;
+  } catch (error) {
+    console.error('[API] Error fetching token price:', error);
+    return 0;
   }
 }
 
-// Replace the holdersRateLimiter initialization (around line 185) with this:
-const holdersRateLimiter = new ApiRateLimiter(2, 1000); // 2 requests per second
-
-// Add Helius configuration
-const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
-const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
-
-// Add interface for Helius API response
-interface HeliusTokenAccount {
-  owner: string;
-  account: string;
-  amount: string;
-}
-
-interface HeliusResponse {
-  jsonrpc: string;
-  result: {
-    token_accounts: HeliusTokenAccount[];
-  };
-  id: string;
-}
-
-// Update the token holders fetch function with proper typing
 async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number> {
   try {
+    console.log('[API] Fetching token holders from Helius...');
     let page = 1;
     const uniqueOwners = new Set<string>();
 
     while (true) {
-      // Rate limiting check
-      if (!holdersRateLimiter.canMakeRequest()) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        continue;
-      }
+      // 1 request per second rate limiting
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Fetch token accounts from Helius
       const response = await fetch(HELIUS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -250,36 +99,34 @@ async function fetchTokenHoldersFromHelius(tokenAddress: string): Promise<number
           id: 'helius-holders',
           params: {
             page: page,
-            limit: 1000,  // Fetches 1000 holders per page
+            limit: 1000,
             mint: tokenAddress,
           },
         }),
       });
 
-      const data = await response.json() as HeliusResponse;
+      const data = await response.json();
 
-      // Break if no more token accounts
       if (!data.result?.token_accounts || data.result.token_accounts.length === 0) {
         break;
       }
 
-      // Add unique owners to set
-      data.result.token_accounts.forEach((account) => 
+      data.result.token_accounts.forEach((account: any) => 
         uniqueOwners.add(account.owner)
       );
 
       page++;
     }
 
-    return uniqueOwners.size;  // Return total unique holders
+    return uniqueOwners.size;
   } catch (error) {
     console.error('[API] Error fetching token holders from Helius:', error);
     throw error;
   }
 }
 
-// Update the token-stats endpoint
-app.get('/api/token-stats', async (_req: express.Request, res: express.Response) => {
+// Endpoints
+app.get('/api/token-stats', async (_req: Request, res: Response) => {
   console.log('[API] Received token stats request');
   try {
     const now = Date.now();
@@ -294,7 +141,6 @@ app.get('/api/token-stats', async (_req: express.Request, res: express.Response)
     }
 
     console.log('[Cache] Cache miss, fetching fresh data');
-    const connection = await getWorkingConnection();
     const tokenAddress = process.env.TOKEN_ADDRESS;
     const founderAddress = process.env.FOUNDER_ADDRESS;
 
@@ -302,19 +148,19 @@ app.get('/api/token-stats', async (_req: express.Request, res: express.Response)
       throw new Error('Missing required environment variables');
     }
 
-    // Fetch all data using both Solana RPC and Helius
-    const [tokenSupply, founderAccount, holdersCount] = await Promise.all([
+    const [tokenSupply, founderAccount, holdersCount, price] = await Promise.all([
       connection.getTokenSupply(new PublicKey(tokenAddress)),
       connection.getParsedTokenAccountsByOwner(new PublicKey(founderAddress), {
         mint: new PublicKey(tokenAddress)
       }),
-      fetchTokenHoldersFromHelius(tokenAddress) // Use new Helius function
+      fetchTokenHoldersFromHelius(tokenAddress),
+      getTokenPrice(tokenAddress)
     ]);
 
     const founderBalance = founderAccount.value[0]?.account.data.parsed.info.tokenAmount.uiAmount || 0;
 
     const responseData: CacheData = {
-      price: cache.data?.price || 0, // Keep last known price if available
+      price,
       totalSupply: tokenSupply.value.uiAmount ?? 0,
       founderBalance,
       holders: holdersCount,
@@ -330,8 +176,6 @@ app.get('/api/token-stats', async (_req: express.Request, res: express.Response)
       ...responseData,
       cached: false
     });
-    return;
-
   } catch (error) {
     console.error('[API] Error:', error);
     if (cache.data) {
@@ -343,17 +187,15 @@ app.get('/api/token-stats', async (_req: express.Request, res: express.Response)
       return;
     }
     res.status(500).json({ error: 'Failed to fetch token stats' });
-    return;
   }
 });
 
-// Health check endpoint
-app.get('/health', (_req: express.Request, res: express.Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok' });
 });
 
-// Add error handling middleware
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+// Error handling
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[Error]', err);
   res.status(500).json({
     error: process.env.NODE_ENV === 'production' 
