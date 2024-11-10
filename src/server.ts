@@ -34,8 +34,8 @@ app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// Main stats endpoint
-app.get('/api/token-stats', async (req: Request, res: Response) => {
+// Main stats endpoint - support both paths for backward compatibility
+app.get(['/api/stats', '/api/token-stats'], async (req: Request, res: Response) => {
   try {
     const tokenStats: TokenStats = {
       price: 0,
@@ -54,6 +54,9 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch token stats' });
   }
 });
+
+// Add CORS preflight handling
+app.options('*', corsConfig);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
