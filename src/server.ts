@@ -42,9 +42,11 @@ async function getTokenPrice(): Promise<number> {
     const response = await apiClient.get('/price', {
       params: { token: TOKEN_ADDRESS }
     });
-    return response.data.price || 0;
+    const price = response.data.price || 0;
+    console.log('[Price] Fetched price:', price, 'USD');
+    return price;
   } catch (error) {
-    console.error('[Error] Fetching token price:', error);
+    console.error('[Price Error] Fetching token price:', error);
     return 0;
   }
 }
@@ -54,9 +56,11 @@ async function fetchTotalTokenSupply(): Promise<number> {
     const connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
     const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
     const supplyResponse = await connection.getTokenSupply(mintPublicKey);
-    return supplyResponse.value.uiAmount || 0;
+    const supply = supplyResponse.value.uiAmount || 0;
+    console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
+    return supply;
   } catch (error) {
-    console.error('[Error] Fetching total supply:', error);
+    console.error('[Supply Error] Fetching total supply:', error);
     return 0;
   }
 }
@@ -65,44 +69,83 @@ async function fetchFounderBalance(): Promise<number> {
   try {
     const connection = new Connection(SOLANA_RPC_ENDPOINT, 'confirmed');
     const walletPublicKey = new PublicKey(FOUNDER_WALLET);
+    console.log('[Founder] Fetching balance for wallet:', FOUNDER_WALLET);
+    
     const tokenAccounts = await connection.getTokenAccountsByOwner(walletPublicKey, {
       mint: new PublicKey(TOKEN_ADDRESS)
     });
 
+    console.log('[Founder] Found', tokenAccounts.value.length, 'token accounts');
+    
     let totalBalance = 0;
     for (const account of tokenAccounts.value) {
       const accountInfo = await connection.getParsedAccountInfo(account.pubkey);
       if (accountInfo.value && 'parsed' in accountInfo.value.data) {
         const tokenAmount = accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0;
+        console.log('[Founder] Account', account.pubkey.toString(), 'balance:', tokenAmount);
         totalBalance += tokenAmount;
       }
     }
+    
+    console.log('[Founder] Total founder balance:', totalBalance.toLocaleString(), 'tokens');
     return totalBalance;
   } catch (error) {
-    console.error('[Error] Fetching founder balance:', error);
+    console.error('[Founder Error] Fetching founder balance:', error);
     return 0;
   }
 }
 
 async function getTokenHolderCount(): Promise<number> {
   try {
-    const response = await axios.post(HELIUS_URL, {
-      jsonrpc: '2.0',
-      method: 'getTokenAccounts',
-      id: 'helius-test',
-      params: {
-        page: 1,
-        limit: 1000,
-        mint: TOKEN_ADDRESS
-      }
-    });
+    let page = 1;
+    const uniqueOwners = new Set();
+    let totalAccounts = 0;
 
-    const uniqueOwners = new Set(
-      response.data.result.token_accounts.map((account: any) => account.owner)
-    );
+    while (true) {
+      console.log('[Holders] Fetching page', page);
+      const response = await axios.post(HELIUS_URL, {
+        jsonrpc: '2.0',
+        method: 'getTokenAccounts',
+        id: 'helius-test',
+        params: {
+          page,
+          limit: 1000,
+          mint: TOKEN_ADDRESS
+        }
+      });
+
+      if (!response.data.result || !response.data.result.token_accounts || response.data.result.token_accounts.length === 0) {
+        console.log('[Holders] No more pages to fetch');
+        break;
+      }
+
+      const accounts = response.data.result.token_accounts;
+      totalAccounts += accounts.length;
+      
+      accounts.forEach((account: any) => {
+        if (account.owner && account.token_amount && account.token_amount.ui_amount > 0) {
+          uniqueOwners.add(account.owner);
+        }
+      });
+
+      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts, ${uniqueOwners.size} unique holders so far`);
+      
+      if (accounts.length < 1000) {
+        break;
+      }
+      page++;
+    }
+
+    console.log('[Holders] Final stats:');
+    console.log(`- Total accounts processed: ${totalAccounts}`);
+    console.log(`- Total unique holders: ${uniqueOwners.size}`);
+    
     return uniqueOwners.size;
   } catch (error) {
-    console.error('[Error] Fetching holder count:', error);
+    console.error('[Holders Error] Fetching holder count:', error instanceof Error ? error.message : 'Unknown error');
+    if (axios.isAxiosError(error) && error.response) {
+      console.error('[Holders Error] Response data:', error.response.data);
+    }
     return 0;
   }
 }
@@ -119,7 +162,8 @@ app.get(['/api/stats', '/api/token-stats'], async (req: Request, res: Response) 
   try {
     const now = Date.now();
     if (tokenStatsCache.data && now - tokenStatsCache.timestamp < tokenStatsCache.ttl) {
-      console.log('[Cache] Returning cached data');
+      console.log('[Cache] Returning cached data from', new Date(tokenStatsCache.timestamp).toISOString());
+      console.log('[Cache] Data:', JSON.stringify(tokenStatsCache.data, null, 2));
       return res.json({
         ...tokenStatsCache.data,
         cached: true,
@@ -128,14 +172,16 @@ app.get(['/api/stats', '/api/token-stats'], async (req: Request, res: Response) 
     }
 
     console.log('[API] Fetching fresh token stats...');
+    console.time('[API] Total fetch time');
     
-    // Fetch all data concurrently
     const [price, totalSupply, founderBalance, holders] = await Promise.all([
       getTokenPrice(),
       fetchTotalTokenSupply(),
       fetchFounderBalance(),
       getTokenHolderCount()
     ]);
+
+    console.timeEnd('[API] Total fetch time');
 
     const tokenStats: TokenStats = {
       price,
@@ -145,17 +191,31 @@ app.get(['/api/stats', '/api/token-stats'], async (req: Request, res: Response) 
       lastUpdated: new Date().toISOString()
     };
 
-    // Update cache
+    // Calculate and log percentages
+    const founderPercentage = totalSupply > 0 ? (founderBalance / totalSupply) * 100 : 0;
+    const circulatingSupply = totalSupply - founderBalance;
+    const circulatingPercentage = totalSupply > 0 ? (circulatingSupply / totalSupply) * 100 : 0;
+
+    console.log('\n[Stats] Summary:');
+    console.log(`- Price: $${price.toFixed(12)}`);
+    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens`);
+    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens (${circulatingPercentage.toFixed(2)}%)`);
+    console.log(`- Founder Balance: ${founderBalance.toLocaleString()} tokens (${founderPercentage.toFixed(2)}%)`);
+    console.log(`- Unique Holders: ${holders.toLocaleString()}`);
+    console.log(`- Last Updated: ${tokenStats.lastUpdated}`);
+
     tokenStatsCache = {
       data: tokenStats,
       timestamp: now,
       ttl: 60 * 1000
     };
 
-    console.log('[API] Data fetched successfully:', tokenStats);
     res.json(tokenStats);
   } catch (error) {
-    console.error('[Error] Error fetching token stats:', error);
+    console.error('[Error] Error fetching token stats:', error instanceof Error ? error.message : 'Unknown error');
+    if (axios.isAxiosError(error) && error.response) {
+      console.error('[Error] Response data:', error.response.data);
+    }
     res.status(500).json({ error: 'Failed to fetch token stats' });
   }
 });
