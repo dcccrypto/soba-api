@@ -119,6 +119,7 @@ const RPC_ENDPOINTS = [
   'https://rpc.ankr.com/solana'
 ].filter((endpoint): endpoint is string => Boolean(endpoint));
 
+// Add detailed error logging for Solana connection
 const getWorkingConnection = async (): Promise<Connection> => {
   for (const endpoint of RPC_ENDPOINTS) {
     try {
@@ -127,14 +128,24 @@ const getWorkingConnection = async (): Promise<Connection> => {
         commitment: 'confirmed',
         confirmTransactionInitialTimeout: 60000
       });
-      const slot = await connection.getSlot();
+      
+      // Add timeout for getSlot
+      const slotPromise = connection.getSlot();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 10000)
+      );
+      
+      const slot = await Promise.race([slotPromise, timeoutPromise]);
       console.log(`[Solana] Successfully connected to ${endpoint} (slot: ${slot})`);
       return connection;
     } catch (error) {
-      console.error(`[Solana] Failed to connect to ${endpoint}:`, error);
+      console.error(`[Solana] Failed to connect to ${endpoint}:`, {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
   }
-  throw new Error('All RPC endpoints failed');
+  throw new Error('[Solana] All RPC endpoints failed');
 };
 
 async function fetchFounderBalance(connection: Connection, founderAddress: string, tokenAddress: string): Promise<number> {
@@ -160,7 +171,11 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
     const now = Date.now();
     if (cache.data && (now - cache.timestamp) < cache.TTL) {
       console.log('[Cache] Returning cached data');
-      return res.json(cache.data);
+      return res.json({
+        ...cache.data,
+        cached: true,
+        cacheAge: now - cache.timestamp
+      });
     }
 
     console.log('[Cache] Cache miss, fetching fresh data');
@@ -169,45 +184,75 @@ app.get('/api/token-stats', async (_req: Request, res: Response) => {
     const founderAddress = process.env.FOUNDER_ADDRESS;
 
     if (!tokenAddress || !founderAddress) {
-      console.error('[API] Missing environment variables');
-      throw new Error('Missing required environment variables');
+      const error = new Error('Missing required environment variables');
+      console.error('[API] Configuration error:', error);
+      throw error;
     }
 
     console.log('[API] Fetching data from multiple sources...');
-    const [priceData, supplyData, founderBalance] = await Promise.all([
-      axiosWithRetry.get<{ price: number }>(`https://data.solanatracker.io/price?token=${tokenAddress}`, {
-        headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
-        retry: 3,
-        retryDelay: 1000,
-      } as RetryConfig),
-      connection.getTokenSupply(new PublicKey(tokenAddress)),
-      fetchFounderBalance(connection, founderAddress, tokenAddress)
-    ]);
+    try {
+      const [priceData, supplyData, founderBalance] = await Promise.all([
+        axiosWithRetry.get<{ price: number }>(
+          `https://data.solanatracker.io/price?token=${tokenAddress}`,
+          {
+            headers: { 'x-api-key': process.env.SOLANA_TRACKER_API_KEY },
+            retry: 3,
+            retryDelay: 1000,
+            timeout: 5000 // Add timeout
+          } as RetryConfig
+        ).catch(error => {
+          console.error('[API] Price fetch failed:', error);
+          throw new Error('Failed to fetch price data');
+        }),
+        connection.getTokenSupply(new PublicKey(tokenAddress))
+          .catch(error => {
+            console.error('[API] Supply fetch failed:', error);
+            throw new Error('Failed to fetch supply data');
+          }),
+        fetchFounderBalance(connection, founderAddress, tokenAddress)
+          .catch(error => {
+            console.error('[API] Balance fetch failed:', error);
+            throw new Error('Failed to fetch founder balance');
+          })
+      ]);
 
-    console.log('[API] Data fetched successfully:', {
-      price: priceData.data.price,
-      totalSupply: supplyData.value.uiAmount,
-      founderBalance
-    });
+      console.log('[API] Data fetched successfully:', {
+        price: priceData.data.price,
+        totalSupply: supplyData.value.uiAmount,
+        founderBalance,
+        timestamp: new Date().toISOString()
+      });
 
-    const responseData: CacheData = {
-      price: priceData.data.price || 0,
-      totalSupply: supplyData.value.uiAmount || 0,
-      founderBalance: founderBalance || 0,
-      lastUpdated: new Date().toISOString()
-    };
+      const responseData: CacheData = {
+        price: priceData.data.price || 0,
+        totalSupply: supplyData.value.uiAmount || 0,
+        founderBalance: founderBalance || 0,
+        lastUpdated: new Date().toISOString()
+      };
 
-    cache.data = responseData;
-    cache.timestamp = now;
-    console.log('[Cache] Cache updated');
+      cache.data = responseData;
+      cache.timestamp = now;
+      console.log('[Cache] Cache updated');
 
-    res.json(responseData);
+      res.json({
+        ...responseData,
+        cached: false
+      });
+    } catch (error) {
+      console.error('[API] Data fetch error:', error);
+      throw error;
+    }
   } catch (error) {
-    console.error('[API] Error in token stats endpoint:', error);
+    console.error('[API] Error in token stats endpoint:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
+      message: error instanceof Error ? error.message : 'Unknown error',
       details: process.env.NODE_ENV === 'development' ? 
-        error instanceof Error ? error.message : String(error) : 
+        error instanceof Error ? error.stack : String(error) : 
         undefined
     });
   }
