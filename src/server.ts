@@ -165,40 +165,59 @@ async function fetchFounderBalance(connection: Connection, founderAddress: strin
   return totalBalance;
 }
 
-// Update the fetchTokenHolders function with the correct endpoint
+// Update the fetchTokenHolders function to only get the count
 async function fetchTokenHolders(tokenAddress: string): Promise<number> {
   try {
-    console.log('[API] Fetching token holders from Solana Tracker...');
+    console.log('[API] Fetching token holders count from Solana Tracker...');
     const response = await axiosWithRetry.get(
-      `https://data.solanatracker.io/tokens/${tokenAddress}/holders`,
+      `https://data.solanatracker.io/tokens/${tokenAddress}/holders/count`,
       {
         headers: { 
           'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
           'Accept': 'application/json'
         },
         retry: 3,
-        retryDelay: 2000, // Increased delay between retries
-        timeout: 15000 // Increased timeout
+        retryDelay: 2000,
+        timeout: 15000
       } as RetryConfig
     );
 
-    if (response.data && Array.isArray(response.data)) {
-      const holderCount = response.data.length;
-      console.log('[API] Holders fetched successfully:', holderCount);
-      return holderCount;
+    if (response.data && typeof response.data.count === 'number') {
+      console.log('[API] Holders count fetched successfully:', response.data.count);
+      return response.data.count;
     } else {
+      // Fallback to counting array length if the count endpoint doesn't exist
+      const holdersResponse = await axiosWithRetry.get(
+        `https://data.solanatracker.io/tokens/${tokenAddress}/holders`,
+        {
+          headers: { 
+            'x-api-key': process.env.SOLANA_TRACKER_API_KEY,
+            'Accept': 'application/json'
+          },
+          retry: 3,
+          retryDelay: 2000,
+          timeout: 15000
+        } as RetryConfig
+      );
+
+      if (Array.isArray(holdersResponse.data)) {
+        const holderCount = holdersResponse.data.length;
+        console.log('[API] Holders count calculated from list:', holderCount);
+        return holderCount;
+      }
+
       console.warn('[API] Unexpected holders data format:', response.data);
       return 0;
     }
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error('[API] Error fetching holders:', {
+      console.error('[API] Error fetching holders count:', {
         status: error.response?.status,
         message: error.message,
         data: error.response?.data
       });
     } else {
-      console.error('[API] Unknown error fetching holders:', error);
+      console.error('[API] Unknown error fetching holders count:', error);
     }
     return 0;
   }
