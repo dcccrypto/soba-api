@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { TokenStats } from './types/index.js';
 import { herokuConfig } from './config/heroku.js';
 import { errorHandler } from './middleware/error.js';
+import { monitorEndpoints } from './middleware/monitor.js';
 import helmet from 'helmet';
 
 const app = express();
@@ -14,6 +15,9 @@ const port = herokuConfig.port;
 // Security middleware
 app.use(helmet());
 app.set('trust proxy', 1);
+
+// Monitoring
+app.use(monitorEndpoints);
 
 // CORS and rate limiting
 app.use(corsConfig);
