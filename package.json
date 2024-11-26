@@ -1,16 +1,16 @@
 {
-  "name": "bosa-backend",
+  "name": "soba-backend",
   "version": "1.0.0",
   "type": "module",
   "main": "dist/server.js",
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
     "start": "node --experimental-specifier-resolution=node dist/server.js",
     "build": "tsc",
     "dev": "ts-node-dev --esm src/server.ts",
     "postinstall": "npm run build"
-  },
-  "engines": {
-    "node": "18.x"
   },
   "dependencies": {
     "@solana/web3.js": "^1.87.6",

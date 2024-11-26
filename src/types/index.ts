@@ -4,8 +4,12 @@ export interface TokenStats {
   founderBalance: number;
   holders: number;
   lastUpdated: string;
-  cached?: boolean;
-  cacheAge?: number;
+  marketCap?: number;
+  volume24h?: number;
+  priceChange24h?: number;
+  burnedTokens?: number;
+  burnRate?: number;
+  circulatingSupply?: number;
 }
 
 export interface ErrorResponse {
