@@ -92,7 +92,7 @@ async function getHolderCount(): Promise<number> {
   }
 }
 
-app.get('/token-stats', async (req: Request, res: Response) => {
+app.get('/api/token-stats', async (req: Request, res: Response) => {
   try {
     // Check cache first
     const cachedStats = statsCache.get('tokenStats');
@@ -128,6 +128,11 @@ app.get('/token-stats', async (req: Request, res: Response) => {
   }
 });
 
+// Add health check endpoint
+app.get('/api/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error('[Error]', err.stack);
@@ -135,14 +140,6 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     error: process.env.NODE_ENV === 'production' 
       ? 'Internal Server Error' 
       : err.message
-  });
-});
-
-// Health check endpoint
-app.get('/health', (req: Request, res: Response) => {
-  res.status(200).json({ 
-    status: 'ok',
-    timestamp: new Date().toISOString()
   });
 });
 
