@@ -2,7 +2,7 @@ import cors from 'cors';
 
 const allowedOrigins = [
   'http://localhost:3000',
-  'https://soba.vercel.app',
+  'https://gyevw.vercel.app',
   process.env.FRONTEND_URL
 ].filter(Boolean);
 

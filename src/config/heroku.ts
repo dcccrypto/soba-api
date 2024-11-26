@@ -8,7 +8,7 @@ export const herokuConfig = {
   founderWallet: process.env.FOUNDER_WALLET,
   corsOrigins: [
     'https://soba.vercel.app',
-    'https://www.soba.vercel.app',
+    'https://www.gyevw.vercel.app',
     'http://localhost:3000'
   ]
 } 

@@ -1,5 +1,9 @@
 import cors from 'cors';
-const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['https://bosabastard.com'];
+const allowedOrigins = [
+    'http://localhost:3000',
+    'https://gyevw.vercel.app',
+    process.env.FRONTEND_URL
+].filter(Boolean);
 export const corsConfig = cors({
     origin: (origin, callback) => {
         if (!origin || allowedOrigins.includes(origin)) {
@@ -9,7 +13,7 @@ export const corsConfig = cors({
             callback(new Error('Not allowed by CORS'));
         }
     },
-    methods: ['GET'],
     credentials: true,
-    maxAge: 86400, // 24 hours
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 });
