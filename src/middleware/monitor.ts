@@ -10,6 +10,3 @@ export const monitorEndpoints = (req: Request, res: Response, next: NextFunction
   
   next()
 }
-
-// Add to server.ts
-app.use(monitorEndpoints) 
