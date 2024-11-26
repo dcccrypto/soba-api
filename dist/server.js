@@ -3,12 +3,15 @@ import { corsConfig } from './middleware/cors.js';
 import rateLimit from 'express-rate-limit';
 import { herokuConfig } from './config/heroku.js';
 import { errorHandler } from './middleware/error.js';
+import { monitorEndpoints } from './middleware/monitor.js';
 import helmet from 'helmet';
 const app = express();
 const port = herokuConfig.port;
 // Security middleware
 app.use(helmet());
 app.set('trust proxy', 1);
+// Monitoring
+app.use(monitorEndpoints);
 // CORS and rate limiting
 app.use(corsConfig);
 app.use(rateLimit({
@@ -22,7 +25,12 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        environment: herokuConfig.nodeEnv
+        environment: herokuConfig.nodeEnv,
+        version: '1.0.0',
+        endpoints: {
+            stats: `${req.protocol}://${req.get('host')}/api/stats`,
+            tokenStats: `${req.protocol}://${req.get('host')}/api/token-stats`
+        }
     });
 });
 // Main stats endpoint with error handling
