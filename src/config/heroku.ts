@@ -10,6 +10,9 @@ export const herokuConfig = {
     'https://soba.vercel.app',
     'https://www.soba.vercel.app',
     'http://localhost:3000',
+    'http://localhost:3001',
+    'http://212.219.39.146:3000',
+    'http://212.219.39.146:3001',
     'https://soba-api-v1-127255a88636.herokuapp.com'
   ]
-} 
+}

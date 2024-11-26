@@ -26,16 +26,22 @@ const statsCache = new NodeCache({ stdTTL: 60 }); // Cache for 1 minute
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.set('trust proxy', 1);
+app.set('trust proxy', true); // Trust Heroku proxy
 app.use(corsConfig);
 
 // Rate limiting configuration
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 60,
+  windowMs: 1 * 60 * 1000, // 1 minute window
+  max: process.env.NODE_ENV === 'production' ? 60 : 120, // 60 requests per minute in production, 120 in development
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || '127.0.0.1'
+  keyGenerator: (req) => {
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const ip = forwardedFor 
+      ? (typeof forwardedFor === 'string' ? forwardedFor : forwardedFor[0])
+      : req.ip;
+    return ip || '127.0.0.1';
+  }
 });
 
 app.use(limiter);
@@ -92,30 +98,39 @@ async function getHolderCount(): Promise<number> {
   }
 }
 
+// Route handlers
+app.get('/api/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.get('/api/token-stats', async (req: Request, res: Response) => {
   try {
     // Check cache first
     const cachedStats = statsCache.get('tokenStats');
     if (cachedStats) {
-      return res.json(cachedStats);
+      const cacheAge = statsCache.getTtl('tokenStats');
+      return res.json({
+        ...cachedStats,
+        cached: true,
+        cacheAge: cacheAge ? Math.floor((cacheAge - Date.now()) / 1000) : null
+      });
     }
 
     const connection = new Connection(SOLANA_RPC_ENDPOINT);
-
-    // Fetch all stats in parallel
+    
     const [price, totalSupply, founderBalance, holders] = await Promise.all([
       getTokenPrice(),
       getTokenSupply(connection),
       getFounderBalance(connection),
-      getHolderCount(),
+      getHolderCount()
     ]);
 
-    const stats: TokenStats = {
+    const stats = {
       price,
       totalSupply,
       founderBalance,
       holders,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: new Date().toISOString()
     };
 
     // Cache the results
@@ -123,28 +138,19 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
 
     res.json(stats);
   } catch (error) {
-    console.error('Error in /token-stats endpoint:', error);
-    res.status(500).json({ error: 'Failed to fetch token statistics' });
+    console.error('Error fetching token stats:', error);
+    res.status(500).json({ error: 'Failed to fetch token stats' });
   }
 });
 
-// Add health check endpoint
-app.get('/api/health', (req: Request, res: Response) => {
-  res.status(200).json({ status: 'healthy' });
-});
-
-// Error handling middleware
+// Error handler
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('[Error]', err.stack);
-  res.status(500).json({
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal Server Error' 
-      : err.message
-  });
+  console.error('Error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 app.options('*', corsConfig);
 
 app.listen(port, () => {
-  console.log(`[Server] Running on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });
