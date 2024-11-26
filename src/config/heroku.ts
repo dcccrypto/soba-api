@@ -9,6 +9,7 @@ export const herokuConfig = {
   corsOrigins: [
     'https://soba.vercel.app',
     'https://www.soba.vercel.app',
-    'http://localhost:3000'
+    'http://localhost:3000',
+    'https://soba-api-v1-127255a88636.herokuapp.com'
   ]
 } 

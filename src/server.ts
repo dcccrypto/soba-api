@@ -29,7 +29,12 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: herokuConfig.nodeEnv
+    environment: herokuConfig.nodeEnv,
+    version: '1.0.0',
+    endpoints: {
+      stats: `${req.protocol}://${req.get('host')}/api/stats`,
+      tokenStats: `${req.protocol}://${req.get('host')}/api/token-stats`
+    }
   });
 });
 

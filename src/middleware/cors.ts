@@ -3,7 +3,8 @@ import cors from 'cors';
 const allowedOrigins = [
   'http://localhost:3000',
   'https://soba.vercel.app',
-  'https://www.soba.vercel.app'
+  'https://www.soba.vercel.app',
+  'https://soba-api-v1-127255a88636.herokuapp.com'
 ].filter(Boolean);
 
 export const corsConfig = cors({
