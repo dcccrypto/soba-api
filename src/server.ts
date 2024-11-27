@@ -63,7 +63,11 @@ async function getTokenSupply(connection: Connection): Promise<number> {
   try {
     const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
     const supplyResponse = await connection.getTokenSupply(mintPublicKey);
-    const supply = supplyResponse.value.uiAmount || 0;
+    const supply = supplyResponse.value.uiAmount;
+    if (typeof supply !== 'number' || isNaN(supply)) {
+      console.error('[Supply Error] Invalid supply value:', supply);
+      return 0;
+    }
     console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
     return supply;
   } catch (error) {
@@ -91,8 +95,19 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
     }
 
     const totalBalance = response.data.result.token_accounts.reduce((sum: number, account: any) => {
-      return sum + (account.amount ? Number(account.amount) / Math.pow(10, account.decimals) : 0);
+      const amount = account.amount ? Number(account.amount) : 0;
+      const decimals = account.decimals ? Number(account.decimals) : 0;
+      if (isNaN(amount) || isNaN(decimals)) {
+        console.error(`[Wallet] Invalid amount or decimals for account:`, account);
+        return sum;
+      }
+      return sum + (amount / Math.pow(10, decimals));
     }, 0);
+
+    if (isNaN(totalBalance)) {
+      console.error(`[Wallet] Invalid total balance for ${walletAddress}`);
+      return 0;
+    }
 
     console.log(`[Wallet] Balance for ${walletAddress}: ${totalBalance.toLocaleString()} tokens`);
     return totalBalance;
@@ -185,23 +200,23 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     console.timeEnd('[Stats] Total fetch time');
 
     // Calculate metrics
-    const circulatingSupply = tokenSupply - founderBalance;
-    const marketCap = circulatingSupply * tokenPrice;
-    const totalValue = tokenSupply * tokenPrice;
-    const founderValue = founderBalance * tokenPrice;
-    const toBeBurnedValue = toBeBurnedTokens * tokenPrice;
+    const circulatingSupply = Math.max(0, tokenSupply - founderBalance);
+    const marketCap = circulatingSupply * (tokenPrice || 0);
+    const totalValue = tokenSupply * (tokenPrice || 0);
+    const founderValue = founderBalance * (tokenPrice || 0);
+    const toBeBurnedValue = toBeBurnedTokens * (tokenPrice || 0);
 
     const stats = {
-      price: tokenPrice,
-      totalSupply: tokenSupply,
-      circulatingSupply,
-      founderBalance,
-      holders,
-      marketCap,
-      totalValue,
-      founderValue,
-      toBeBurnedTokens,
-      toBeBurnedValue,
+      price: tokenPrice || 0,
+      totalSupply: tokenSupply || 0,
+      circulatingSupply: circulatingSupply || 0,
+      founderBalance: founderBalance || 0,
+      holders: holders || 0,
+      marketCap: marketCap || 0,
+      totalValue: totalValue || 0,
+      founderValue: founderValue || 0,
+      toBeBurnedTokens: toBeBurnedTokens || 0,
+      toBeBurnedValue: toBeBurnedValue || 0,
       lastUpdated: new Date().toISOString(),
       cached: false
     };
@@ -226,6 +241,18 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
       message: error instanceof Error ? error.message : String(error),
+      price: 0,
+      totalSupply: 0,
+      circulatingSupply: 0,
+      founderBalance: 0,
+      holders: 0,
+      marketCap: 0,
+      totalValue: 0,
+      founderValue: 0,
+      toBeBurnedTokens: 0,
+      toBeBurnedValue: 0,
+      lastUpdated: new Date().toISOString(),
+      cached: false,
       timestamp: new Date().toISOString()
     });
   }
