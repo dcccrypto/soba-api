@@ -105,9 +105,12 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 app.get('/api/token-stats', async (req: Request, res: Response) => {
   try {
+    console.log('Fetching token stats...');
+    
     // Check cache first
     const cachedStats = statsCache.get('tokenStats');
     if (cachedStats) {
+      console.log('Returning cached stats:', cachedStats);
       const cacheAge = statsCache.getTtl('tokenStats');
       return res.json({
         ...cachedStats,
@@ -116,14 +119,32 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
       });
     }
 
+    console.log('Cache miss, fetching fresh data...');
+    console.log('Using RPC endpoint:', SOLANA_RPC_ENDPOINT);
+    
     const connection = new Connection(SOLANA_RPC_ENDPOINT);
     
+    console.log('Fetching token data...');
     const [price, totalSupply, founderBalance, holders] = await Promise.all([
-      getTokenPrice(),
-      getTokenSupply(connection),
-      getFounderBalance(connection),
-      getHolderCount()
+      getTokenPrice().catch(e => {
+        console.error('Price fetch error:', e);
+        return 0;
+      }),
+      getTokenSupply(connection).catch(e => {
+        console.error('Supply fetch error:', e);
+        return 0;
+      }),
+      getFounderBalance(connection).catch(e => {
+        console.error('Founder balance fetch error:', e);
+        return 0;
+      }),
+      getHolderCount().catch(e => {
+        console.error('Holder count fetch error:', e);
+        return 0;
+      })
     ]);
+
+    console.log('Data fetched:', { price, totalSupply, founderBalance, holders });
 
     const stats = {
       price,
@@ -135,11 +156,18 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
 
     // Cache the results
     statsCache.set('tokenStats', stats);
+    console.log('Stats cached successfully');
 
     res.json(stats);
   } catch (error) {
-    console.error('Error fetching token stats:', error);
-    res.status(500).json({ error: 'Failed to fetch token stats' });
+    console.error('Error in /api/token-stats:', error);
+    if (error instanceof Error) {
+      console.error('Stack trace:', error.stack);
+    }
+    res.status(500).json({ 
+      error: 'Failed to fetch token stats',
+      message: error instanceof Error ? error.message : String(error)
+    });
   }
 });
 
