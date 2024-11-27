@@ -161,6 +161,8 @@ app.get('/health', (req: Request, res: Response) => {
 app.get('/token-stats', async (req: Request, res: Response) => {
   try {
     console.log('[Stats] Token stats request received');
+    console.log('[Headers] Origin:', req.headers.origin);
+    console.log('[Headers] Referer:', req.headers.referer);
     
     // Check cache
     const cachedStats = statsCache.get('tokenStats');
@@ -188,8 +190,17 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       getWalletBalance(FOUNDER_WALLET, connection),
       getWalletBalance(BURN_WALLET, connection),
       getHolderCount()
-    ]);
+    ]).catch(error => {
+      console.error('[Stats Error] Failed to fetch data:', error);
+      throw error;
+    });
     console.timeEnd('[Stats] Total fetch time');
+
+    // Validate data
+    if (!tokenPrice || !tokenSupply) {
+      console.error('[Stats Error] Invalid data:', { tokenPrice, tokenSupply });
+      throw new Error('Failed to fetch token price or supply');
+    }
 
     // Calculate derived metrics
     const circulatingSupply = tokenSupply - founderBalance - burnedTokens;
