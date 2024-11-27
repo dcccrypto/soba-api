@@ -15,9 +15,35 @@ const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS || '';
 const FOUNDER_WALLET = process.env.FOUNDER_WALLET || '';
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
+// Configuration validation
+if (!SOLANA_RPC_ENDPOINT) {
+  console.error('SOLANA_RPC_ENDPOINT is not configured');
+  process.exit(1);
+}
+
+if (!SOLANA_TRACKER_API_KEY) {
+  console.error('SOLANA_TRACKER_API_KEY is not configured');
+  process.exit(1);
+}
+
+if (!HELIUS_API_KEY) {
+  console.error('HELIUS_API_KEY is not configured');
+  process.exit(1);
+}
+
+if (!TOKEN_ADDRESS) {
+  console.error('TOKEN_ADDRESS is not configured');
+  process.exit(1);
+}
+
+if (!FOUNDER_WALLET) {
+  console.error('FOUNDER_WALLET is not configured');
+  process.exit(1);
+}
+
 // Solana Tracker API client
 const apiClient = axios.create({
-  baseURL: 'https://data.solanatracker.io',
+  baseURL: 'https://data.solanatracker.io/v1',
   headers: { 'x-api-key': SOLANA_TRACKER_API_KEY }
 });
 
@@ -48,14 +74,7 @@ app.use(limiter);
 
 async function getTokenPrice(): Promise<number> {
   try {
-    const response = await axios.get(
-      `https://api.solanatracker.io/v1/token/${TOKEN_ADDRESS}/price`,
-      {
-        headers: {
-          'x-api-key': SOLANA_TRACKER_API_KEY,
-        },
-      }
-    );
+    const response = await apiClient.get(`/token/${TOKEN_ADDRESS}/price`);
     return response.data.price || 0;
   } catch (error) {
     console.error('Error fetching token price:', error);
@@ -88,10 +107,18 @@ async function getFounderBalance(connection: Connection): Promise<number> {
 
 async function getHolderCount(): Promise<number> {
   try {
-    const response = await axios.get(
-      `https://api.helius.xyz/v0/token-metadata/${TOKEN_ADDRESS}?api-key=${HELIUS_API_KEY}`
+    const response = await axios.post(
+      HELIUS_URL,
+      {
+        jsonrpc: '2.0',
+        id: 'holder-count',
+        method: 'getTokenAccounts',
+        params: {
+          mintAddress: TOKEN_ADDRESS,
+        },
+      }
     );
-    return response.data.onChainMetadata?.holders || 0;
+    return response.data.result?.length || 0;
   } catch (error) {
     console.error('Error fetching holder count:', error);
     return 0;
@@ -105,7 +132,9 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 app.get('/api/token-stats', async (req: Request, res: Response) => {
   try {
-    console.log('Fetching token stats...');
+    console.log('Token stats request received');
+    console.log('Headers:', req.headers);
+    console.log('Origin:', req.get('origin'));
     
     // Check cache first
     const cachedStats = statsCache.get('tokenStats');
@@ -122,7 +151,15 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
     console.log('Cache miss, fetching fresh data...');
     console.log('Using RPC endpoint:', SOLANA_RPC_ENDPOINT);
     
+    // Validate RPC connection
     const connection = new Connection(SOLANA_RPC_ENDPOINT);
+    try {
+      const version = await connection.getVersion();
+      console.log('RPC Version:', version);
+    } catch (error) {
+      console.error('Failed to connect to RPC:', error);
+      throw new Error('RPC connection failed');
+    }
     
     console.log('Fetching token data...');
     const [price, totalSupply, founderBalance, holders] = await Promise.all([
@@ -166,7 +203,8 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
     }
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
-      message: error instanceof Error ? error.message : String(error)
+      message: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString()
     });
   }
 });
