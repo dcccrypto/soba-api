@@ -1,20 +1,20 @@
-export const herokuConfig = {
-  port: process.env.PORT || 3001,
-  nodeEnv: process.env.NODE_ENV || 'development',
-  solanaRpcEndpoint: process.env.SOLANA_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com',
-  solanaTrackerApiKey: process.env.SOLANA_TRACKER_API_KEY,
-  heliusApiKey: process.env.HELIUS_API_KEY,
-  tokenAddress: process.env.TOKEN_ADDRESS || '25p2BoNp6qrJH5As6ek6H7Ei495oSkyZd3tGb97sqFmH',
-  founderWallet: process.env.FOUNDER_WALLET || 'D2y4sbmBuSjLU1hfrZbBCaveCHjk952c9VsGwfxnNNNH',
-  corsOrigins: [
-    'https://soba.vercel.app',
-    'https://www.soba.vercel.app',
-    'https://gyevw.vercel.app',
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://212.219.39.146:3000',
-    'http://212.219.39.146:3001',
-    'https://soba-api-v1-127255a88636.herokuapp.com',
-    'https://soba-api-ec0b8a7a21a7.herokuapp.com'
-  ]
-}
+import { config } from 'dotenv';
+
+config();
+
+export const HEROKU_CONFIG = {
+  PORT: process.env.PORT || 3001,
+  SOLANA_RPC_ENDPOINT: process.env.SOLANA_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com',
+  SOLANA_TRACKER_API_KEY: process.env.SOLANA_TRACKER_API_KEY,
+  HELIUS_API_KEY: process.env.HELIUS_API_KEY,
+  TOKEN_ADDRESS: process.env.TOKEN_ADDRESS || 'AZsHEMXd7BFK1nKL6corC9VdQXLiLwrcpBUhgTpbwsKG',
+  FOUNDER_WALLET: process.env.FOUNDER_WALLET || 'D2y4sbmBuSjLU1hfrZbBCaveCHjk952c9VsGwfxnNNNH',
+  BURN_WALLET: process.env.BURN_WALLET || '7wtbTXc7Lyxt1enezJa7eNyNxenaLYsmBeiZTsA3KvwL',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  CACHE_TTL: parseInt(process.env.CACHE_TTL || '60'), // Cache time in seconds
+  RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW || '900000'), // 15 minutes in milliseconds
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100'), // Maximum requests per window
+};
+
+export type HerokuConfig = typeof HEROKU_CONFIG;

@@ -12,6 +12,7 @@ const SOLANA_TRACKER_API_KEY = process.env.SOLANA_TRACKER_API_KEY || '';
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS || '';
 const FOUNDER_WALLET = process.env.FOUNDER_WALLET || '';
+const BURN_WALLET = process.env.BURN_WALLET || '';
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
 // Validate configuration
@@ -20,7 +21,8 @@ const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
   ['SOLANA_TRACKER_API_KEY', SOLANA_TRACKER_API_KEY],
   ['HELIUS_API_KEY', HELIUS_API_KEY],
   ['TOKEN_ADDRESS', TOKEN_ADDRESS],
-  ['FOUNDER_WALLET', FOUNDER_WALLET]
+  ['FOUNDER_WALLET', FOUNDER_WALLET],
+  ['BURN_WALLET', BURN_WALLET]
 ].forEach(([name, value]) => {
   if (!value) {
     console.error(`${name} is not configured`);
@@ -88,11 +90,11 @@ async function getTokenSupply(connection: Connection): Promise<number> {
   }
 }
 
-async function getFounderBalance(connection: Connection): Promise<number> {
+async function getWalletBalance(walletAddress: string, connection: Connection): Promise<number> {
   try {
-    console.log('[Founder] Fetching founder balance...');
-    const founderPubkey = new PublicKey(FOUNDER_WALLET);
-    const accounts = await connection.getTokenAccountsByOwner(founderPubkey, {
+    console.log(`[Wallet] Fetching balance for wallet ${walletAddress}...`);
+    const walletPubkey = new PublicKey(walletAddress);
+    const accounts = await connection.getTokenAccountsByOwner(walletPubkey, {
       mint: new PublicKey(TOKEN_ADDRESS)
     });
     
@@ -105,10 +107,10 @@ async function getFounderBalance(connection: Connection): Promise<number> {
       }
     }
     
-    console.log('[Founder] Total balance:', totalBalance.toLocaleString(), 'tokens');
+    console.log(`[Wallet] Total balance for wallet ${walletAddress}:`, totalBalance.toLocaleString(), 'tokens');
     return totalBalance;
   } catch (error) {
-    console.error('[Founder Error] Fetching founder balance:', error);
+    console.error(`[Wallet Error] Fetching balance for wallet ${walletAddress}:`, error);
     return 0;
   }
 }
@@ -152,11 +154,11 @@ async function getHolderCount(): Promise<number> {
   }
 }
 
-app.get('/api/health', (req: Request, res: Response) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.get('/api/token-stats', async (req: Request, res: Response) => {
+app.get('/token-stats', async (req: Request, res: Response) => {
   try {
     console.log('[Stats] Token stats request received');
     
@@ -180,25 +182,25 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
 
     // Fetch all data
     console.time('[Stats] Total fetch time');
-    const [price, totalSupply, founderBalance, holders] = await Promise.all([
+    const [tokenPrice, tokenSupply, founderBalance, burnedTokens, holders] = await Promise.all([
       getTokenPrice(),
       getTokenSupply(connection),
-      getFounderBalance(connection),
+      getWalletBalance(FOUNDER_WALLET, connection),
+      getWalletBalance(BURN_WALLET, connection),
       getHolderCount()
     ]);
     console.timeEnd('[Stats] Total fetch time');
 
-    // Calculate additional metrics
-    const circulatingSupply = totalSupply - founderBalance;
-    const marketCap = price * circulatingSupply;
-    const totalValue = price * totalSupply;
-    const founderValue = price * founderBalance;
-    const burnedTokens = totalSupply - circulatingSupply - founderBalance;
-    const burnedValue = price * burnedTokens;
+    // Calculate derived metrics
+    const circulatingSupply = tokenSupply - founderBalance - burnedTokens;
+    const marketCap = circulatingSupply * tokenPrice;
+    const totalValue = tokenSupply * tokenPrice;
+    const founderValue = founderBalance * tokenPrice;
+    const burnedValue = burnedTokens * tokenPrice;
 
     const stats = {
-      price,
-      totalSupply,
+      price: tokenPrice,
+      totalSupply: tokenSupply,
       circulatingSupply,
       founderBalance,
       holders,
@@ -207,13 +209,14 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
       founderValue,
       burnedTokens,
       burnedValue,
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date().toISOString(),
+      cached: false
     };
 
     // Log summary
     console.log('\n[Stats] Summary:');
-    console.log(`- Price: $${price.toFixed(12)}`);
-    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toFixed(2)})`);
+    console.log(`- Price: $${tokenPrice.toFixed(12)}`);
+    console.log(`- Total Supply: ${tokenSupply.toLocaleString()} tokens ($${totalValue.toFixed(2)})`);
     console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toFixed(2)})`);
     console.log(`- Founder Balance: ${founderBalance.toLocaleString()} tokens ($${founderValue.toFixed(2)})`);
     console.log(`- Burned Tokens: ${burnedTokens.toLocaleString()} tokens ($${burnedValue.toFixed(2)})`);
