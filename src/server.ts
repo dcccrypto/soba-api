@@ -30,42 +30,25 @@ const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
   }
 });
 
-// Solana Tracker API client
-const apiClient = axios.create({
-  baseURL: 'https://data.solanatracker.io',
-  headers: { 'x-api-key': SOLANA_TRACKER_API_KEY }
-});
-
-const statsCache = new NodeCache({ stdTTL: 60 }); // Cache for 1 minute
-
 const app = express();
-const port = process.env.PORT || 3001;
-
-app.set('trust proxy', 1);
 app.use(corsConfig);
 
-// Rate limiting configuration
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: process.env.NODE_ENV === 'production' ? 60 : 120,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    const forwardedFor = req.headers['x-forwarded-for'];
-    const ip = forwardedFor 
-      ? (typeof forwardedFor === 'string' ? forwardedFor : forwardedFor[0])
-      : req.ip;
-    return ip || '127.0.0.1';
-  }
+  keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || '127.0.0.1'
 });
 
 app.use(limiter);
 
+// Token data fetching functions
 async function getTokenPrice(): Promise<number> {
   try {
-    console.log('[Price] Fetching token price...');
-    const response = await apiClient.get('/price', {
-      params: { token: TOKEN_ADDRESS }
+    const response = await axios.get('https://data.solanatracker.io/price', {
+      params: { token: TOKEN_ADDRESS },
+      headers: { 'x-api-key': SOLANA_TRACKER_API_KEY }
     });
     const price = response.data.price || 0;
     console.log('[Price] Fetched price:', price, 'USD');
@@ -78,36 +61,40 @@ async function getTokenPrice(): Promise<number> {
 
 async function getTokenSupply(connection: Connection): Promise<number> {
   try {
-    console.log('[Supply] Fetching total supply...');
-    const tokenPubkey = new PublicKey(TOKEN_ADDRESS);
-    const supply = await connection.getTokenSupply(tokenPubkey);
-    const totalSupply = Number(supply.value.amount);
-    console.log('[Supply] Total supply:', totalSupply.toLocaleString(), 'tokens');
-    return totalSupply;
+    const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
+    const supplyResponse = await connection.getTokenSupply(mintPublicKey);
+    const supply = supplyResponse.value.uiAmount || 0;
+    console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
+    return supply;
   } catch (error) {
-    console.error('[Supply Error] Fetching token supply:', error);
+    console.error('[Supply Error] Fetching total supply:', error);
     return 0;
   }
 }
 
 async function getWalletBalance(walletAddress: string, connection: Connection): Promise<number> {
   try {
-    console.log(`[Wallet] Fetching balance for wallet ${walletAddress}...`);
-    const walletPubkey = new PublicKey(walletAddress);
-    const accounts = await connection.getTokenAccountsByOwner(walletPubkey, {
-      mint: new PublicKey(TOKEN_ADDRESS)
-    });
-    
-    let totalBalance = 0;
-    for (const account of accounts.value) {
-      const accountInfo = await connection.getParsedAccountInfo(account.pubkey);
-      if (accountInfo.value && 'parsed' in accountInfo.value.data) {
-        const balance = accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0;
-        totalBalance += balance;
+    console.log(`[Wallet] Fetching balance for wallet: ${walletAddress}`);
+    const response = await axios.post(HELIUS_URL, {
+      jsonrpc: '2.0',
+      method: 'getTokenAccounts',
+      id: 'helius-test',
+      params: {
+        mint: TOKEN_ADDRESS,
+        owner: walletAddress
       }
+    });
+
+    if (!response.data.result?.token_accounts) {
+      console.log(`[Wallet] No token accounts found for ${walletAddress}`);
+      return 0;
     }
-    
-    console.log(`[Wallet] Total balance for wallet ${walletAddress}:`, totalBalance.toLocaleString(), 'tokens');
+
+    const totalBalance = response.data.result.token_accounts.reduce((sum: number, account: any) => {
+      return sum + (account.amount ? Number(account.amount) / Math.pow(10, account.decimals) : 0);
+    }, 0);
+
+    console.log(`[Wallet] Balance for ${walletAddress}: ${totalBalance.toLocaleString()} tokens`);
     return totalBalance;
   } catch (error) {
     console.error(`[Wallet Error] Fetching balance for wallet ${walletAddress}:`, error);
@@ -117,42 +104,52 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
 
 async function getHolderCount(): Promise<number> {
   try {
-    console.log('[Holders] Fetching holder count...');
     let page = 1;
-    const uniqueHolders = new Set<string>();
-    
+    const uniqueOwners = new Set<string>();
+    let totalAccounts = 0;
+
     while (true) {
+      console.log('[Holders] Fetching page', page);
       const response = await axios.post(HELIUS_URL, {
         jsonrpc: '2.0',
-        id: 'holder-count',
         method: 'getTokenAccounts',
+        id: 'helius-test',
         params: {
-          mint: TOKEN_ADDRESS,
           page,
-          limit: 1000
+          limit: 1000,
+          mint: TOKEN_ADDRESS
         }
       });
 
-      const accounts = response.data.result?.token_accounts || [];
-      if (accounts.length === 0) break;
+      if (!response.data.result?.token_accounts || response.data.result.token_accounts.length === 0) {
+        break;
+      }
 
+      const accounts = response.data.result.token_accounts;
+      totalAccounts += accounts.length;
+      
       accounts.forEach((account: any) => {
-        if (account.owner) uniqueHolders.add(account.owner);
+        if (account.owner) {
+          uniqueOwners.add(account.owner);
+        }
       });
 
-      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts`);
-      
-      if (accounts.length < 1000) break;
+      if (accounts.length < 1000) {
+        break;
+      }
       page++;
     }
 
-    console.log('[Holders] Total unique holders:', uniqueHolders.size);
-    return uniqueHolders.size;
+    console.log('[Holders] Final count:', uniqueOwners.size);
+    return uniqueOwners.size;
   } catch (error) {
     console.error('[Holders Error] Fetching holder count:', error);
     return 0;
   }
 }
+
+// Cache configuration
+const statsCache = new NodeCache({ stdTTL: 60 }); // 60 seconds TTL
 
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -176,33 +173,18 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       });
     }
 
-    // Validate RPC connection
-    console.log('[RPC] Connecting to Solana...');
-    const connection = new Connection(SOLANA_RPC_ENDPOINT);
-    const version = await connection.getVersion();
-    console.log('[RPC] Connected, version:', version);
-
     // Fetch all data
     console.time('[Stats] Total fetch time');
     const [tokenPrice, tokenSupply, founderBalance, burnedTokens, holders] = await Promise.all([
       getTokenPrice(),
-      getTokenSupply(connection),
-      getWalletBalance(FOUNDER_WALLET, connection),
-      getWalletBalance(BURN_WALLET, connection),
+      getTokenSupply(new Connection(HELIUS_URL)),
+      getWalletBalance(FOUNDER_WALLET, new Connection(HELIUS_URL)),
+      getWalletBalance(BURN_WALLET, new Connection(HELIUS_URL)),
       getHolderCount()
-    ]).catch(error => {
-      console.error('[Stats Error] Failed to fetch data:', error);
-      throw error;
-    });
+    ]);
     console.timeEnd('[Stats] Total fetch time');
 
-    // Validate data
-    if (!tokenPrice || !tokenSupply) {
-      console.error('[Stats Error] Invalid data:', { tokenPrice, tokenSupply });
-      throw new Error('Failed to fetch token price or supply');
-    }
-
-    // Calculate derived metrics
+    // Calculate metrics
     const circulatingSupply = tokenSupply - founderBalance - burnedTokens;
     const marketCap = circulatingSupply * tokenPrice;
     const totalValue = tokenSupply * tokenPrice;
@@ -249,7 +231,7 @@ app.get('/token-stats', async (req: Request, res: Response) => {
   }
 });
 
-// Start server
+const port = process.env.PORT || 3001;
 app.listen(port, () => {
   console.log(`[Server] Running on port ${port}`);
 });
