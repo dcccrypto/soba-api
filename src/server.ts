@@ -4,7 +4,6 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { TokenStats } from './types/index.js';
-import fs from 'fs';
 import NodeCache from 'node-cache';
 
 // Configuration
@@ -15,35 +14,23 @@ const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS || '';
 const FOUNDER_WALLET = process.env.FOUNDER_WALLET || '';
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
-// Configuration validation
-if (!SOLANA_RPC_ENDPOINT) {
-  console.error('SOLANA_RPC_ENDPOINT is not configured');
-  process.exit(1);
-}
-
-if (!SOLANA_TRACKER_API_KEY) {
-  console.error('SOLANA_TRACKER_API_KEY is not configured');
-  process.exit(1);
-}
-
-if (!HELIUS_API_KEY) {
-  console.error('HELIUS_API_KEY is not configured');
-  process.exit(1);
-}
-
-if (!TOKEN_ADDRESS) {
-  console.error('TOKEN_ADDRESS is not configured');
-  process.exit(1);
-}
-
-if (!FOUNDER_WALLET) {
-  console.error('FOUNDER_WALLET is not configured');
-  process.exit(1);
-}
+// Validate configuration
+[
+  ['SOLANA_RPC_ENDPOINT', SOLANA_RPC_ENDPOINT],
+  ['SOLANA_TRACKER_API_KEY', SOLANA_TRACKER_API_KEY],
+  ['HELIUS_API_KEY', HELIUS_API_KEY],
+  ['TOKEN_ADDRESS', TOKEN_ADDRESS],
+  ['FOUNDER_WALLET', FOUNDER_WALLET]
+].forEach(([name, value]) => {
+  if (!value) {
+    console.error(`${name} is not configured`);
+    process.exit(1);
+  }
+});
 
 // Solana Tracker API client
 const apiClient = axios.create({
-  baseURL: 'https://data.solanatracker.io/v1',
+  baseURL: 'https://data.solanatracker.io',
   headers: { 'x-api-key': SOLANA_TRACKER_API_KEY }
 });
 
@@ -52,13 +39,13 @@ const statsCache = new NodeCache({ stdTTL: 60 }); // Cache for 1 minute
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.set('trust proxy', true); // Trust Heroku proxy
+app.set('trust proxy', 1);
 app.use(corsConfig);
 
 // Rate limiting configuration
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute window
-  max: process.env.NODE_ENV === 'production' ? 60 : 120, // 60 requests per minute in production, 120 in development
+  windowMs: 1 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 60 : 120,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
@@ -74,72 +61,109 @@ app.use(limiter);
 
 async function getTokenPrice(): Promise<number> {
   try {
-    const response = await apiClient.get(`/token/${TOKEN_ADDRESS}/price`);
-    return response.data.price || 0;
+    console.log('[Price] Fetching token price...');
+    const response = await apiClient.get('/price', {
+      params: { token: TOKEN_ADDRESS }
+    });
+    const price = response.data.price || 0;
+    console.log('[Price] Fetched price:', price, 'USD');
+    return price;
   } catch (error) {
-    console.error('Error fetching token price:', error);
+    console.error('[Price Error] Fetching token price:', error);
     return 0;
   }
 }
 
 async function getTokenSupply(connection: Connection): Promise<number> {
   try {
+    console.log('[Supply] Fetching total supply...');
     const tokenPubkey = new PublicKey(TOKEN_ADDRESS);
     const supply = await connection.getTokenSupply(tokenPubkey);
-    return Number(supply.value.amount);
+    const totalSupply = Number(supply.value.amount);
+    console.log('[Supply] Total supply:', totalSupply.toLocaleString(), 'tokens');
+    return totalSupply;
   } catch (error) {
-    console.error('Error fetching token supply:', error);
+    console.error('[Supply Error] Fetching token supply:', error);
     return 0;
   }
 }
 
 async function getFounderBalance(connection: Connection): Promise<number> {
   try {
-    const tokenPubkey = new PublicKey(TOKEN_ADDRESS);
+    console.log('[Founder] Fetching founder balance...');
     const founderPubkey = new PublicKey(FOUNDER_WALLET);
-    const balance = await connection.getTokenAccountBalance(founderPubkey);
-    return Number(balance.value.amount);
+    const accounts = await connection.getTokenAccountsByOwner(founderPubkey, {
+      mint: new PublicKey(TOKEN_ADDRESS)
+    });
+    
+    let totalBalance = 0;
+    for (const account of accounts.value) {
+      const accountInfo = await connection.getParsedAccountInfo(account.pubkey);
+      if (accountInfo.value && 'parsed' in accountInfo.value.data) {
+        const balance = accountInfo.value.data.parsed.info.tokenAmount.uiAmount || 0;
+        totalBalance += balance;
+      }
+    }
+    
+    console.log('[Founder] Total balance:', totalBalance.toLocaleString(), 'tokens');
+    return totalBalance;
   } catch (error) {
-    console.error('Error fetching founder balance:', error);
+    console.error('[Founder Error] Fetching founder balance:', error);
     return 0;
   }
 }
 
 async function getHolderCount(): Promise<number> {
   try {
-    const response = await axios.post(
-      HELIUS_URL,
-      {
+    console.log('[Holders] Fetching holder count...');
+    let page = 1;
+    const uniqueHolders = new Set<string>();
+    
+    while (true) {
+      const response = await axios.post(HELIUS_URL, {
         jsonrpc: '2.0',
         id: 'holder-count',
         method: 'getTokenAccounts',
         params: {
-          mintAddress: TOKEN_ADDRESS,
-        },
-      }
-    );
-    return response.data.result?.length || 0;
+          mint: TOKEN_ADDRESS,
+          page,
+          limit: 1000
+        }
+      });
+
+      const accounts = response.data.result?.token_accounts || [];
+      if (accounts.length === 0) break;
+
+      accounts.forEach((account: any) => {
+        if (account.owner) uniqueHolders.add(account.owner);
+      });
+
+      console.log(`[Holders] Page ${page}: Found ${accounts.length} accounts`);
+      
+      if (accounts.length < 1000) break;
+      page++;
+    }
+
+    console.log('[Holders] Total unique holders:', uniqueHolders.size);
+    return uniqueHolders.size;
   } catch (error) {
-    console.error('Error fetching holder count:', error);
+    console.error('[Holders Error] Fetching holder count:', error);
     return 0;
   }
 }
 
-// Route handlers
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.get('/api/token-stats', async (req: Request, res: Response) => {
   try {
-    console.log('Token stats request received');
-    console.log('Headers:', req.headers);
-    console.log('Origin:', req.get('origin'));
+    console.log('[Stats] Token stats request received');
     
-    // Check cache first
+    // Check cache
     const cachedStats = statsCache.get('tokenStats');
     if (cachedStats) {
-      console.log('Returning cached stats:', cachedStats);
+      console.log('[Cache] Returning cached stats');
       const cacheAge = statsCache.getTtl('tokenStats');
       return res.json({
         ...cachedStats,
@@ -148,59 +172,61 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
       });
     }
 
-    console.log('Cache miss, fetching fresh data...');
-    console.log('Using RPC endpoint:', SOLANA_RPC_ENDPOINT);
-    
     // Validate RPC connection
+    console.log('[RPC] Connecting to Solana...');
     const connection = new Connection(SOLANA_RPC_ENDPOINT);
-    try {
-      const version = await connection.getVersion();
-      console.log('RPC Version:', version);
-    } catch (error) {
-      console.error('Failed to connect to RPC:', error);
-      throw new Error('RPC connection failed');
-    }
-    
-    console.log('Fetching token data...');
-    const [price, totalSupply, founderBalance, holders] = await Promise.all([
-      getTokenPrice().catch(e => {
-        console.error('Price fetch error:', e);
-        return 0;
-      }),
-      getTokenSupply(connection).catch(e => {
-        console.error('Supply fetch error:', e);
-        return 0;
-      }),
-      getFounderBalance(connection).catch(e => {
-        console.error('Founder balance fetch error:', e);
-        return 0;
-      }),
-      getHolderCount().catch(e => {
-        console.error('Holder count fetch error:', e);
-        return 0;
-      })
-    ]);
+    const version = await connection.getVersion();
+    console.log('[RPC] Connected, version:', version);
 
-    console.log('Data fetched:', { price, totalSupply, founderBalance, holders });
+    // Fetch all data
+    console.time('[Stats] Total fetch time');
+    const [price, totalSupply, founderBalance, holders] = await Promise.all([
+      getTokenPrice(),
+      getTokenSupply(connection),
+      getFounderBalance(connection),
+      getHolderCount()
+    ]);
+    console.timeEnd('[Stats] Total fetch time');
+
+    // Calculate additional metrics
+    const circulatingSupply = totalSupply - founderBalance;
+    const marketCap = price * circulatingSupply;
+    const totalValue = price * totalSupply;
+    const founderValue = price * founderBalance;
+    const burnedTokens = totalSupply - circulatingSupply - founderBalance;
+    const burnedValue = price * burnedTokens;
 
     const stats = {
       price,
       totalSupply,
+      circulatingSupply,
       founderBalance,
       holders,
+      marketCap,
+      totalValue,
+      founderValue,
+      burnedTokens,
+      burnedValue,
       lastUpdated: new Date().toISOString()
     };
 
+    // Log summary
+    console.log('\n[Stats] Summary:');
+    console.log(`- Price: $${price.toFixed(12)}`);
+    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toFixed(2)})`);
+    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toFixed(2)})`);
+    console.log(`- Founder Balance: ${founderBalance.toLocaleString()} tokens ($${founderValue.toFixed(2)})`);
+    console.log(`- Burned Tokens: ${burnedTokens.toLocaleString()} tokens ($${burnedValue.toFixed(2)})`);
+    console.log(`- Holders: ${holders.toLocaleString()}`);
+    console.log(`- Last Updated: ${stats.lastUpdated}`);
+
     // Cache the results
     statsCache.set('tokenStats', stats);
-    console.log('Stats cached successfully');
+    console.log('[Cache] Stats cached successfully');
 
     res.json(stats);
   } catch (error) {
-    console.error('Error in /api/token-stats:', error);
-    if (error instanceof Error) {
-      console.error('Stack trace:', error.stack);
-    }
+    console.error('[Error] Failed to fetch token stats:', error);
     res.status(500).json({ 
       error: 'Failed to fetch token stats',
       message: error instanceof Error ? error.message : String(error),
@@ -209,14 +235,7 @@ app.get('/api/token-stats', async (req: Request, res: Response) => {
   }
 });
 
-// Error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('Error:', err);
-  res.status(500).json({ error: 'Internal server error' });
-});
-
-app.options('*', corsConfig);
-
+// Start server
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`[Server] Running on port ${port}`);
 });
