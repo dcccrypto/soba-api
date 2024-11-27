@@ -7,7 +7,11 @@ import { TokenStats } from './types/index.js';
 import NodeCache from 'node-cache';
 
 // Configuration
-const SOLANA_RPC_ENDPOINT = process.env.SOLANA_RPC_ENDPOINT || '';
+const SOLANA_RPC_ENDPOINTS = [
+  process.env.SOLANA_RPC_ENDPOINT || '',
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-api.projectserum.com'
+];
 const SOLANA_TRACKER_API_KEY = process.env.SOLANA_TRACKER_API_KEY || '';
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS || '';
@@ -17,7 +21,7 @@ const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 
 // Validate configuration
 [
-  ['SOLANA_RPC_ENDPOINT', SOLANA_RPC_ENDPOINT],
+  ['SOLANA_RPC_ENDPOINT', SOLANA_RPC_ENDPOINTS[0]],
   ['SOLANA_TRACKER_API_KEY', SOLANA_TRACKER_API_KEY],
   ['HELIUS_API_KEY', HELIUS_API_KEY],
   ['TOKEN_ADDRESS', TOKEN_ADDRESS],
@@ -60,20 +64,37 @@ async function getTokenPrice(): Promise<number> {
 }
 
 async function getTokenSupply(connection: Connection): Promise<number> {
-  try {
-    const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
-    const supplyResponse = await connection.getTokenSupply(mintPublicKey);
-    const supply = supplyResponse.value.uiAmount;
-    if (typeof supply !== 'number' || isNaN(supply)) {
+  let lastError = null;
+  
+  // Try each RPC endpoint
+  for (const endpoint of SOLANA_RPC_ENDPOINTS) {
+    try {
+      console.log(`[Supply] Trying RPC endpoint: ${endpoint}`);
+      const conn = new Connection(endpoint);
+      const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
+      const supplyResponse = await conn.getTokenSupply(mintPublicKey);
+      const supply = supplyResponse.value.uiAmount;
+      
+      if (typeof supply === 'number' && !isNaN(supply)) {
+        console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
+        return supply;
+      }
       console.error('[Supply Error] Invalid supply value:', supply);
-      return 0;
+    } catch (error) {
+      console.error(`[Supply Error] Failed with endpoint ${endpoint}:`, error);
+      lastError = error;
     }
-    console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
-    return supply;
-  } catch (error) {
-    console.error('[Supply Error] Fetching total supply:', error);
-    return 0;
   }
+
+  // If all endpoints fail, try to get cached value
+  const cachedStats = statsCache.get('tokenStats') as TokenStats;
+  if (cachedStats?.totalSupply) {
+    console.log('[Supply] Using cached total supply:', cachedStats.totalSupply);
+    return cachedStats.totalSupply;
+  }
+
+  console.error('[Supply Error] All endpoints failed:', lastError);
+  return 0;
 }
 
 async function getWalletBalance(walletAddress: string, connection: Connection): Promise<number> {
@@ -192,7 +213,7 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     console.time('[Stats] Total fetch time');
     const [tokenPrice, tokenSupply, founderBalance, toBeBurnedTokens, holders] = await Promise.all([
       getTokenPrice(),
-      getTokenSupply(new Connection(HELIUS_URL)),
+      getTokenSupply(new Connection(SOLANA_RPC_ENDPOINTS[0])),
       getWalletBalance(FOUNDER_WALLET, new Connection(HELIUS_URL)),
       getWalletBalance(BURN_WALLET, new Connection(HELIUS_URL)),
       getHolderCount()
