@@ -274,10 +274,10 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     // Log summary
     console.log('\n[Stats] Summary:');
     console.log(`- Price: $${tokenPrice.toFixed(12)}`);
-    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toLocaleString(2)})`);
-    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toLocaleString(2)})`);
-    console.log(`- Founder Balance: ${founderHoldings.toLocaleString()} tokens ($${founderValue.toLocaleString(2)})`);
-    console.log(`- Tokens to be Burned: ${burnWalletBalance.toLocaleString()} tokens ($${toBeBurnedValue.toLocaleString(2)})`);
+    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+    console.log(`- Founder Balance: ${founderHoldings.toLocaleString()} tokens ($${founderValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+    console.log(`- Tokens to be Burned: ${burnWalletBalance.toLocaleString()} tokens ($${toBeBurnedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
     console.log(`- Holders: ${holders.toLocaleString()}`);
     console.log(`- Last Updated: ${stats.lastUpdated}`);
 
