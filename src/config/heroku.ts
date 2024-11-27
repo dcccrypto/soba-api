@@ -14,6 +14,7 @@ export const herokuConfig = {
     'http://localhost:3001',
     'http://212.219.39.146:3000',
     'http://212.219.39.146:3001',
-    'https://soba-api-v1-127255a88636.herokuapp.com'
+    'https://soba-api-v1-127255a88636.herokuapp.com',
+    'https://soba-api-ec0b8a7a21a7.herokuapp.com'
   ]
 }
