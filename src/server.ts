@@ -175,7 +175,7 @@ app.get('/token-stats', async (req: Request, res: Response) => {
 
     // Fetch all data
     console.time('[Stats] Total fetch time');
-    const [tokenPrice, tokenSupply, founderBalance, burnedTokens, holders] = await Promise.all([
+    const [tokenPrice, tokenSupply, founderBalance, toBeBurnedTokens, holders] = await Promise.all([
       getTokenPrice(),
       getTokenSupply(new Connection(HELIUS_URL)),
       getWalletBalance(FOUNDER_WALLET, new Connection(HELIUS_URL)),
@@ -185,11 +185,11 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     console.timeEnd('[Stats] Total fetch time');
 
     // Calculate metrics
-    const circulatingSupply = tokenSupply - founderBalance - burnedTokens;
+    const circulatingSupply = tokenSupply - founderBalance;
     const marketCap = circulatingSupply * tokenPrice;
     const totalValue = tokenSupply * tokenPrice;
     const founderValue = founderBalance * tokenPrice;
-    const burnedValue = burnedTokens * tokenPrice;
+    const toBeBurnedValue = toBeBurnedTokens * tokenPrice;
 
     const stats = {
       price: tokenPrice,
@@ -200,8 +200,8 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       marketCap,
       totalValue,
       founderValue,
-      burnedTokens,
-      burnedValue,
+      toBeBurnedTokens,
+      toBeBurnedValue,
       lastUpdated: new Date().toISOString(),
       cached: false
     };
@@ -212,7 +212,7 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     console.log(`- Total Supply: ${tokenSupply.toLocaleString()} tokens ($${totalValue.toFixed(2)})`);
     console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toFixed(2)})`);
     console.log(`- Founder Balance: ${founderBalance.toLocaleString()} tokens ($${founderValue.toFixed(2)})`);
-    console.log(`- Burned Tokens: ${burnedTokens.toLocaleString()} tokens ($${burnedValue.toFixed(2)})`);
+    console.log(`- Tokens to be Burned: ${toBeBurnedTokens.toLocaleString()} tokens ($${toBeBurnedValue.toFixed(2)})`);
     console.log(`- Holders: ${holders.toLocaleString()}`);
     console.log(`- Last Updated: ${stats.lastUpdated}`);
 
