@@ -35,8 +35,11 @@ const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
 });
 
 const app = express();
+
+// Apply CORS first
 app.use(corsConfig);
 
+// Then apply rate limiting
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 60,
@@ -44,8 +47,28 @@ const limiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || '127.0.0.1'
 });
-
 app.use(limiter);
+
+// Add CORS headers to all responses
+app.use((req, res, next) => {
+  // Log CORS-related info
+  console.log('[CORS] Request from:', req.headers.origin);
+  console.log('[CORS] Request method:', req.method);
+  
+  // Ensure CORS headers are set
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, Accept, X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  
+  next();
+});
 
 // Token data fetching functions
 async function getTokenPrice(): Promise<number> {
@@ -221,23 +244,29 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     console.timeEnd('[Stats] Total fetch time');
 
     // Calculate metrics
-    const circulatingSupply = Math.max(0, tokenSupply - founderBalance);
+    const totalSupply = tokenSupply || 0;
+    const founderHoldings = founderBalance || 0;
+    const burnWalletBalance = toBeBurnedTokens || 0;
+    
+    // Circulating supply = Total supply - (Founder balance + Burn wallet balance)
+    const circulatingSupply = Math.max(0, totalSupply - (founderHoldings + burnWalletBalance));
+    
     const marketCap = circulatingSupply * (tokenPrice || 0);
-    const totalValue = tokenSupply * (tokenPrice || 0);
-    const founderValue = founderBalance * (tokenPrice || 0);
-    const toBeBurnedValue = toBeBurnedTokens * (tokenPrice || 0);
+    const totalValue = totalSupply * (tokenPrice || 0);
+    const founderValue = founderHoldings * (tokenPrice || 0);
+    const toBeBurnedValue = burnWalletBalance * (tokenPrice || 0);
 
     const stats = {
       price: tokenPrice || 0,
-      totalSupply: tokenSupply || 0,
-      circulatingSupply: circulatingSupply || 0,
-      founderBalance: founderBalance || 0,
+      totalSupply,
+      circulatingSupply,
+      founderBalance: founderHoldings,
       holders: holders || 0,
-      marketCap: marketCap || 0,
-      totalValue: totalValue || 0,
-      founderValue: founderValue || 0,
-      toBeBurnedTokens: toBeBurnedTokens || 0,
-      toBeBurnedValue: toBeBurnedValue || 0,
+      marketCap,
+      totalValue,
+      founderValue,
+      toBeBurnedTokens: burnWalletBalance,
+      toBeBurnedValue,
       lastUpdated: new Date().toISOString(),
       cached: false
     };
@@ -245,10 +274,10 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     // Log summary
     console.log('\n[Stats] Summary:');
     console.log(`- Price: $${tokenPrice.toFixed(12)}`);
-    console.log(`- Total Supply: ${tokenSupply.toLocaleString()} tokens ($${totalValue.toFixed(2)})`);
-    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toFixed(2)})`);
-    console.log(`- Founder Balance: ${founderBalance.toLocaleString()} tokens ($${founderValue.toFixed(2)})`);
-    console.log(`- Tokens to be Burned: ${toBeBurnedTokens.toLocaleString()} tokens ($${toBeBurnedValue.toFixed(2)})`);
+    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toLocaleString(2)})`);
+    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toLocaleString(2)})`);
+    console.log(`- Founder Balance: ${founderHoldings.toLocaleString()} tokens ($${founderValue.toLocaleString(2)})`);
+    console.log(`- Tokens to be Burned: ${burnWalletBalance.toLocaleString()} tokens ($${toBeBurnedValue.toLocaleString(2)})`);
     console.log(`- Holders: ${holders.toLocaleString()}`);
     console.log(`- Last Updated: ${stats.lastUpdated}`);
 
