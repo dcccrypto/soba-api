@@ -5,6 +5,7 @@ import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { TokenStats } from './types/index.js';
 import NodeCache from 'node-cache';
+import { formatNumber, formatPrice, formatUSD } from './utils/format.js';
 
 // Configuration
 const SOLANA_RPC_ENDPOINTS = [
@@ -18,6 +19,7 @@ const TOKEN_ADDRESS = process.env.TOKEN_ADDRESS || '';
 const FOUNDER_WALLET = process.env.FOUNDER_WALLET || '';
 const BURN_WALLET = process.env.BURN_WALLET || '';
 const HELIUS_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=soba&vs_currencies=usd';
 
 // Validate configuration
 [
@@ -73,12 +75,11 @@ app.use((req, res, next) => {
 // Token data fetching functions
 async function getTokenPrice(): Promise<number> {
   try {
-    const response = await axios.get('https://data.solanatracker.io/price', {
-      params: { token: TOKEN_ADDRESS },
-      headers: { 'x-api-key': SOLANA_TRACKER_API_KEY }
-    });
-    const price = response.data.price || 0;
-    console.log('[Price] Fetched price:', price, 'USD');
+    console.log('[Price] Fetching token price...');
+    const response = await axios.get(COINGECKO_URL);
+    const price = response.data?.soba?.usd || 0;
+
+    console.log('[Price] Fetched price:', formatPrice(price));
     return price;
   } catch (error) {
     console.error('[Price Error] Fetching token price:', error);
@@ -103,7 +104,7 @@ async function getTokenSupply(connection: Connection): Promise<number> {
         const supply = Number(amount) / Math.pow(10, decimals);
         console.log('[Supply] Raw amount:', amount);
         console.log('[Supply] Decimals:', decimals);
-        console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
+        console.log('[Supply] Total token supply:', formatNumber(supply), 'tokens');
         return supply;
       }
       console.error('[Supply Error] Invalid supply value:', { amount, decimals });
@@ -116,7 +117,7 @@ async function getTokenSupply(connection: Connection): Promise<number> {
   // If all endpoints fail, try to get cached value
   const cachedStats = statsCache.get('tokenStats') as TokenStats;
   if (cachedStats?.totalSupply) {
-    console.log('[Supply] Using cached total supply:', cachedStats.totalSupply);
+    console.log('[Supply] Using cached total supply:', formatNumber(cachedStats.totalSupply));
     return cachedStats.totalSupply;
   }
 
@@ -143,16 +144,21 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
     }
 
     const totalBalance = response.data.result.token_accounts.reduce((sum: number, account: any) => {
-      const amount = account.amount ? Number(account.amount) : 0;
+      if (!account.amount || !account.decimals) {
+        console.error(`[Wallet] Invalid account data:`, account);
+        return sum;
+      }
+
+      const amount = account.amount ? BigInt(account.amount) : BigInt(0);
       const decimals = account.decimals ? Number(account.decimals) : 9; // Default to 9 decimals for SOBA
       
-      if (isNaN(amount) || isNaN(decimals)) {
-        console.error(`[Wallet] Invalid amount or decimals for account:`, account);
+      if (decimals < 0 || decimals > 20) {
+        console.error(`[Wallet] Invalid decimals for account:`, account);
         return sum;
       }
       
-      const balance = amount / Math.pow(10, decimals);
-      console.log(`[Wallet] Account balance: ${balance.toLocaleString()} tokens (raw: ${amount}, decimals: ${decimals})`);
+      const balance = Number(amount) / Math.pow(10, decimals);
+      console.log(`[Wallet] Account balance: ${formatNumber(balance)} tokens (raw: ${amount}, decimals: ${decimals})`);
       return sum + balance;
     }, 0);
 
@@ -161,7 +167,7 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
       return 0;
     }
 
-    console.log(`[Wallet] Total balance for ${walletAddress}: ${totalBalance.toLocaleString()} tokens`);
+    console.log(`[Wallet] Total balance for ${walletAddress}: ${formatNumber(totalBalance)} tokens`);
     return totalBalance;
   } catch (error) {
     console.error(`[Wallet Error] Fetching balance for wallet ${walletAddress}:`, error);
@@ -294,11 +300,11 @@ app.get('/token-stats', async (req: Request, res: Response) => {
 
     // Validate calculations
     console.log('\n[Validation] Supply breakdown:');
-    console.log(`Total Supply: ${totalSupply.toLocaleString()}`);
-    console.log(`Founder Holdings: ${founderHoldings.toLocaleString()}`);
-    console.log(`Burn Wallet: ${burnWalletBalance.toLocaleString()}`);
-    console.log(`Circulating Supply: ${circulatingSupply.toLocaleString()}`);
-    console.log(`Sum Check: ${(founderHoldings + burnWalletBalance + circulatingSupply).toLocaleString()}`);
+    console.log(`Total Supply: ${formatNumber(totalSupply)}`);
+    console.log(`Founder Holdings: ${formatNumber(founderHoldings)}`);
+    console.log(`Burn Wallet: ${formatNumber(burnWalletBalance)}`);
+    console.log(`Circulating Supply: ${formatNumber(circulatingSupply)}`);
+    console.log(`Sum Check: ${formatNumber(founderHoldings + burnWalletBalance + circulatingSupply)}`);
     console.log(`Burn Rate: ${burnRate.toFixed(2)}%`);
 
     // Validate sum
@@ -321,18 +327,32 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       toBeBurnedValue,
       burnRate,
       lastUpdated: new Date().toISOString(),
-      cached: false
+      cached: false,
+      // Add formatted values
+      formatted: {
+        price: formatPrice(price),
+        totalSupply: formatNumber(totalSupply),
+        circulatingSupply: formatNumber(circulatingSupply),
+        founderBalance: formatNumber(founderHoldings),
+        holders: formatNumber(holders || 0),
+        marketCap: formatUSD(marketCap),
+        totalValue: formatUSD(totalValue),
+        founderValue: formatUSD(founderValue),
+        toBeBurnedTokens: formatNumber(burnWalletBalance),
+        toBeBurnedValue: formatUSD(toBeBurnedValue),
+        burnRate: `${burnRate.toFixed(2)}%`
+      }
     };
 
     // Log summary
     console.log('\n[Stats] Summary:');
-    console.log(`- Price: $${price.toFixed(12)}`);
-    console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
-    console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
-    console.log(`- Founder Balance: ${founderHoldings.toLocaleString()} tokens ($${founderValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
-    console.log(`- Tokens to be Burned: ${burnWalletBalance.toLocaleString()} tokens ($${toBeBurnedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+    console.log(`- Price: ${formatPrice(price)}`);
+    console.log(`- Total Supply: ${formatNumber(totalSupply)} tokens (${formatUSD(totalValue)})`);
+    console.log(`- Circulating Supply: ${formatNumber(circulatingSupply)} tokens (${formatUSD(marketCap)})`);
+    console.log(`- Founder Balance: ${formatNumber(founderHoldings)} tokens (${formatUSD(founderValue)})`);
+    console.log(`- Tokens to be Burned: ${formatNumber(burnWalletBalance)} tokens (${formatUSD(toBeBurnedValue)})`);
     console.log(`- Burn Rate: ${burnRate.toFixed(2)}%`);
-    console.log(`- Holders: ${holders.toLocaleString()}`);
+    console.log(`- Holders: ${formatNumber(holders)}`);
     console.log(`- Last Updated: ${stats.lastUpdated}`);
 
     // Cache the results
@@ -358,7 +378,20 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       burnRate: 0,
       lastUpdated: new Date().toISOString(),
       cached: false,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      formatted: {
+        price: '$0',
+        totalSupply: '0',
+        circulatingSupply: '0',
+        founderBalance: '0',
+        holders: '0',
+        marketCap: '$0',
+        totalValue: '$0',
+        founderValue: '$0',
+        toBeBurnedTokens: '0',
+        toBeBurnedValue: '$0',
+        burnRate: '0%'
+      }
     });
   }
 });
