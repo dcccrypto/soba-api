@@ -96,13 +96,17 @@ async function getTokenSupply(connection: Connection): Promise<number> {
       const conn = new Connection(endpoint);
       const mintPublicKey = new PublicKey(TOKEN_ADDRESS);
       const supplyResponse = await conn.getTokenSupply(mintPublicKey);
-      const supply = supplyResponse.value.uiAmount;
+      const amount = supplyResponse.value.amount;
+      const decimals = supplyResponse.value.decimals;
       
-      if (typeof supply === 'number' && !isNaN(supply)) {
+      if (typeof amount === 'string' && !isNaN(Number(amount)) && typeof decimals === 'number') {
+        const supply = Number(amount) / Math.pow(10, decimals);
+        console.log('[Supply] Raw amount:', amount);
+        console.log('[Supply] Decimals:', decimals);
         console.log('[Supply] Total token supply:', supply.toLocaleString(), 'tokens');
         return supply;
       }
-      console.error('[Supply Error] Invalid supply value:', supply);
+      console.error('[Supply Error] Invalid supply value:', { amount, decimals });
     } catch (error) {
       console.error(`[Supply Error] Failed with endpoint ${endpoint}:`, error);
       lastError = error;
@@ -140,12 +144,16 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
 
     const totalBalance = response.data.result.token_accounts.reduce((sum: number, account: any) => {
       const amount = account.amount ? Number(account.amount) : 0;
-      const decimals = account.decimals ? Number(account.decimals) : 0;
+      const decimals = account.decimals ? Number(account.decimals) : 9; // Default to 9 decimals for SOBA
+      
       if (isNaN(amount) || isNaN(decimals)) {
         console.error(`[Wallet] Invalid amount or decimals for account:`, account);
         return sum;
       }
-      return sum + (amount / Math.pow(10, decimals));
+      
+      const balance = amount / Math.pow(10, decimals);
+      console.log(`[Wallet] Account balance: ${balance.toLocaleString()} tokens (raw: ${amount}, decimals: ${decimals})`);
+      return sum + balance;
     }, 0);
 
     if (isNaN(totalBalance)) {
@@ -153,7 +161,7 @@ async function getWalletBalance(walletAddress: string, connection: Connection): 
       return 0;
     }
 
-    console.log(`[Wallet] Balance for ${walletAddress}: ${totalBalance.toLocaleString()} tokens`);
+    console.log(`[Wallet] Total balance for ${walletAddress}: ${totalBalance.toLocaleString()} tokens`);
     return totalBalance;
   } catch (error) {
     console.error(`[Wallet Error] Fetching balance for wallet ${walletAddress}:`, error);
@@ -254,9 +262,25 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       throw new Error('Invalid total supply');
     }
 
+    // Validate wallet balances
+    if (founderHoldings > totalSupply) {
+      console.error('[Error] Founder balance exceeds total supply:', { founderHoldings, totalSupply });
+      throw new Error('Founder balance exceeds total supply');
+    }
+
+    if (burnWalletBalance > totalSupply) {
+      console.error('[Error] Burn wallet balance exceeds total supply:', { burnWalletBalance, totalSupply });
+      throw new Error('Burn wallet balance exceeds total supply');
+    }
+
     // Calculate circulating supply
-    // Circulating supply = Total supply - (Founder balance + Burn wallet balance)
     const circulatingSupply = Math.max(0, totalSupply - founderHoldings - burnWalletBalance);
+
+    // Validate circulating supply
+    if (circulatingSupply > totalSupply) {
+      console.error('[Error] Circulating supply exceeds total supply:', { circulatingSupply, totalSupply });
+      throw new Error('Circulating supply exceeds total supply');
+    }
     
     // Calculate values
     const price = tokenPrice || 0;
@@ -265,13 +289,24 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     const founderValue = founderHoldings * price;
     const toBeBurnedValue = burnWalletBalance * price;
 
+    // Calculate burn rate (as percentage of total supply)
+    const burnRate = (burnWalletBalance / totalSupply) * 100;
+
     // Validate calculations
     console.log('\n[Validation] Supply breakdown:');
-    console.log(`Total Supply: ${totalSupply}`);
-    console.log(`Founder Holdings: ${founderHoldings}`);
-    console.log(`Burn Wallet: ${burnWalletBalance}`);
-    console.log(`Circulating Supply: ${circulatingSupply}`);
-    console.log(`Sum Check: ${founderHoldings + burnWalletBalance + circulatingSupply}`);
+    console.log(`Total Supply: ${totalSupply.toLocaleString()}`);
+    console.log(`Founder Holdings: ${founderHoldings.toLocaleString()}`);
+    console.log(`Burn Wallet: ${burnWalletBalance.toLocaleString()}`);
+    console.log(`Circulating Supply: ${circulatingSupply.toLocaleString()}`);
+    console.log(`Sum Check: ${(founderHoldings + burnWalletBalance + circulatingSupply).toLocaleString()}`);
+    console.log(`Burn Rate: ${burnRate.toFixed(2)}%`);
+
+    // Validate sum
+    const totalHoldings = founderHoldings + burnWalletBalance + circulatingSupply;
+    if (Math.abs(totalHoldings - totalSupply) > 1) { // Allow for small rounding errors
+      console.error('[Error] Supply mismatch:', { totalHoldings, totalSupply });
+      throw new Error('Supply mismatch');
+    }
 
     const stats = {
       price,
@@ -284,17 +319,19 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       founderValue,
       toBeBurnedTokens: burnWalletBalance,
       toBeBurnedValue,
+      burnRate,
       lastUpdated: new Date().toISOString(),
       cached: false
     };
 
     // Log summary
     console.log('\n[Stats] Summary:');
-    console.log(`- Price: $${tokenPrice.toFixed(12)}`);
+    console.log(`- Price: $${price.toFixed(12)}`);
     console.log(`- Total Supply: ${totalSupply.toLocaleString()} tokens ($${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
     console.log(`- Circulating Supply: ${circulatingSupply.toLocaleString()} tokens ($${marketCap.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
     console.log(`- Founder Balance: ${founderHoldings.toLocaleString()} tokens ($${founderValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
     console.log(`- Tokens to be Burned: ${burnWalletBalance.toLocaleString()} tokens ($${toBeBurnedValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+    console.log(`- Burn Rate: ${burnRate.toFixed(2)}%`);
     console.log(`- Holders: ${holders.toLocaleString()}`);
     console.log(`- Last Updated: ${stats.lastUpdated}`);
 
@@ -318,6 +355,7 @@ app.get('/token-stats', async (req: Request, res: Response) => {
       founderValue: 0,
       toBeBurnedTokens: 0,
       toBeBurnedValue: 0,
+      burnRate: 0,
       lastUpdated: new Date().toISOString(),
       cached: false,
       timestamp: new Date().toISOString()
