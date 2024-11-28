@@ -248,16 +248,33 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     const founderHoldings = founderBalance || 0;
     const burnWalletBalance = toBeBurnedTokens || 0;
     
+    // Validate inputs
+    if (totalSupply <= 0) {
+      console.error('[Error] Invalid total supply:', totalSupply);
+      throw new Error('Invalid total supply');
+    }
+
+    // Calculate circulating supply
     // Circulating supply = Total supply - (Founder balance + Burn wallet balance)
-    const circulatingSupply = Math.max(0, totalSupply - (founderHoldings + burnWalletBalance));
+    const circulatingSupply = Math.max(0, totalSupply - founderHoldings - burnWalletBalance);
     
-    const marketCap = circulatingSupply * (tokenPrice || 0);
-    const totalValue = totalSupply * (tokenPrice || 0);
-    const founderValue = founderHoldings * (tokenPrice || 0);
-    const toBeBurnedValue = burnWalletBalance * (tokenPrice || 0);
+    // Calculate values
+    const price = tokenPrice || 0;
+    const marketCap = circulatingSupply * price;
+    const totalValue = totalSupply * price;
+    const founderValue = founderHoldings * price;
+    const toBeBurnedValue = burnWalletBalance * price;
+
+    // Validate calculations
+    console.log('\n[Validation] Supply breakdown:');
+    console.log(`Total Supply: ${totalSupply}`);
+    console.log(`Founder Holdings: ${founderHoldings}`);
+    console.log(`Burn Wallet: ${burnWalletBalance}`);
+    console.log(`Circulating Supply: ${circulatingSupply}`);
+    console.log(`Sum Check: ${founderHoldings + burnWalletBalance + circulatingSupply}`);
 
     const stats = {
-      price: tokenPrice || 0,
+      price,
       totalSupply,
       circulatingSupply,
       founderBalance: founderHoldings,
