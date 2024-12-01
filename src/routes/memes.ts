@@ -11,6 +11,17 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
+// In-memory storage for memes (replace with database in production)
+let memes: Array<{
+  id: string;
+  url: string;
+  pathname: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  uploadDate: string;
+}> = [];
+
 // Configure multer for memory storage
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -70,6 +81,20 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
       pathname: blob.pathname
     });
 
+    // Create meme record
+    const meme = {
+      id: uuidv4(),
+      url: blob.url,
+      pathname: blob.pathname,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      uploadDate: new Date().toISOString()
+    };
+
+    // Store meme in memory (replace with database in production)
+    memes.unshift(meme);
+
     return res.status(200).json({
       success: true,
       data: {
@@ -92,13 +117,9 @@ router.get('/', async (req: Request, res: Response) => {
   console.log('Fetching memes');
   
   try {
-    // In a real application, you would fetch this from a database
-    // For now, return a sample response
     return res.status(200).json({
       success: true,
-      data: {
-        memes: []
-      }
+      data: memes
     });
   } catch (error) {
     console.error('Error fetching memes:', error);
