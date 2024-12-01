@@ -11,8 +11,7 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
-// In-memory storage for memes (replace with database in production)
-let memes: Array<{
+interface Meme {
   id: string;
   url: string;
   pathname: string;
@@ -20,7 +19,44 @@ let memes: Array<{
   mimeType: string;
   size: number;
   uploadDate: string;
-}> = [];
+}
+
+// File path for storing memes data
+const MEMES_FILE = path.join(__dirname, '../../data/memes.json');
+
+// Ensure data directory exists
+const dataDir = path.join(__dirname, '../../data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// Initialize memes file if it doesn't exist
+if (!fs.existsSync(MEMES_FILE)) {
+  fs.writeFileSync(MEMES_FILE, JSON.stringify([], null, 2));
+}
+
+// Load memes from file
+const loadMemes = (): Meme[] => {
+  try {
+    const data = fs.readFileSync(MEMES_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error loading memes:', error);
+    return [];
+  }
+};
+
+// Save memes to file
+const saveMemes = (memes: Meme[]) => {
+  try {
+    fs.writeFileSync(MEMES_FILE, JSON.stringify(memes, null, 2));
+  } catch (error) {
+    console.error('Error saving memes:', error);
+  }
+};
+
+// Load initial memes
+let memes = loadMemes();
 
 // Configure multer for memory storage
 const storage = multer.memoryStorage();
@@ -30,12 +66,6 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
   fileFilter: (req, file, cb) => {
-    console.log('Received file:', { 
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size 
-    });
-
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -46,11 +76,8 @@ const upload = multer({
 
 // Upload endpoint
 router.post('/upload', upload.single('meme'), async (req: Request, res: Response) => {
-  console.log('Upload request received');
-  
   try {
     if (!req.file) {
-      console.log('No file in request');
       return res.status(400).json({
         success: false,
         error: 'No file uploaded'
@@ -58,27 +85,14 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
     }
 
     const file = req.file;
-    console.log('Processing file:', { 
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size 
-    });
-
     const fileExtension = file.originalname.split('.').pop();
     const filename = `${uuidv4()}.${fileExtension}`;
-
-    console.log('Uploading to Vercel Blob:', filename);
 
     // Upload to Vercel Blob Storage
     const blob = await put(filename, file.buffer, {
       access: 'public',
       contentType: file.mimetype,
       token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-
-    console.log('Upload successful:', { 
-      url: blob.url,
-      pathname: blob.pathname
     });
 
     // Create meme record
@@ -92,15 +106,15 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
       uploadDate: new Date().toISOString()
     };
 
-    // Store meme in memory (replace with database in production)
+    // Add to memory and save to file
     memes.unshift(meme);
+    saveMemes(memes);
+
+    console.log('Meme saved:', meme);
 
     return res.status(200).json({
       success: true,
-      data: {
-        url: blob.url,
-        pathname: blob.pathname
-      }
+      data: meme
     });
 
   } catch (error) {
@@ -114,9 +128,11 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
 
 // Get all memes endpoint
 router.get('/', async (req: Request, res: Response) => {
-  console.log('Fetching memes');
-  
   try {
+    // Reload memes from file to ensure we have the latest
+    memes = loadMemes();
+    console.log('Returning memes:', memes);
+    
     return res.status(200).json({
       success: true,
       data: memes
