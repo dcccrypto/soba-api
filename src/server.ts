@@ -7,6 +7,7 @@ import { TokenStats } from './types/index.js';
 import NodeCache from 'node-cache';
 import { formatNumber, formatPrice, formatUSD } from './utils/format.js';
 import memeRoutes from './routes/memes';
+import { connectDB } from './config/mongodb';
 
 // Configuration
 const SOLANA_RPC_ENDPOINTS = [
@@ -38,6 +39,9 @@ const COINGECKO_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=soba&vs
 });
 
 const app = express();
+
+// Connect to MongoDB
+connectDB();
 
 // Apply CORS first
 app.use(corsConfig);
