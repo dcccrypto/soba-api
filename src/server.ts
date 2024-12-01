@@ -46,6 +46,16 @@ connectDB();
 // Apply CORS first
 app.use(corsConfig);
 
+// Parse JSON bodies
+app.use(express.json());
+
+// Add CORS headers to all responses
+app.use((req, res, next) => {
+  console.log('[CORS] Request from:', req.headers.origin);
+  console.log('[CORS] Request method:', req.method);
+  next();
+});
+
 // Then apply rate limiting
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000,
@@ -55,27 +65,6 @@ const limiter = rateLimit({
   keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || '127.0.0.1'
 });
 app.use(limiter);
-
-// Add CORS headers to all responses
-app.use((req, res, next) => {
-  // Log CORS-related info
-  console.log('[CORS] Request from:', req.headers.origin);
-  console.log('[CORS] Request method:', req.method);
-  
-  // Ensure CORS headers are set
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Origin, Accept, X-Requested-With');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-  
-  next();
-});
 
 // Serve uploaded files statically
 app.use('/uploads', express.static('public/uploads'));

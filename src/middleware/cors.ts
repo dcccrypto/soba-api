@@ -9,7 +9,8 @@ const allowedOrigins = [
   'https://gyevw.vercel.app',
   'http://localhost:3000',
   'http://localhost:3001',
-  'http://localhost:5173'  // Add Vite default port
+  'http://localhost:5173',  // Add Vite default port
+  'https://soba-api-v1-127255a88636.herokuapp.com' // Add Heroku domain
 ];
 
 export const corsConfig = cors({
@@ -22,7 +23,14 @@ export const corsConfig = cors({
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin) || isDevelopment) {
+    // In development, allow all origins
+    if (isDevelopment) {
+      console.log('[CORS] Development mode - allowing origin:', origin);
+      return callback(null, true);
+    }
+
+    // In production, check against allowedOrigins
+    if (allowedOrigins.includes(origin)) {
       console.log('[CORS] Origin allowed:', origin);
       return callback(null, true);
     }
