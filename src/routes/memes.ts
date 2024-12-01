@@ -19,6 +19,12 @@ const upload = multer({
     fileSize: 4.5 * 1024 * 1024, // 4.5MB limit (Vercel Blob server upload limit)
   },
   fileFilter: (req, file, cb) => {
+    console.log('Received file:', { 
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size 
+    });
+
     // Accept images and GIFs
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -30,8 +36,11 @@ const upload = multer({
 
 // Upload endpoint
 router.post('/upload', upload.single('meme'), async (req: Request, res: Response) => {
+  console.log('Upload request received');
+  
   try {
     if (!req.file) {
+      console.log('No file in request');
       return res.status(400).json({
         success: false,
         error: 'No file uploaded'
@@ -39,14 +48,27 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
     }
 
     const file = req.file;
+    console.log('Processing file:', { 
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size 
+    });
+
     const fileExtension = file.originalname.split('.').pop();
     const filename = `${uuidv4()}.${fileExtension}`;
+
+    console.log('Uploading to Vercel Blob:', filename);
 
     // Upload to Vercel Blob Storage
     const blob = await put(filename, file.buffer, {
       access: 'public',
       contentType: file.mimetype,
       token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+
+    console.log('Upload successful:', { 
+      url: blob.url,
+      pathname: blob.pathname
     });
 
     return res.status(200).json({
@@ -73,6 +95,8 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
 
 // Get all memes endpoint
 router.get('/', async (req: Request, res: Response) => {
+  console.log('Fetching memes');
+  
   try {
     // In a real application, you would fetch the list of memes from a database
     // For now, we'll return a success message
