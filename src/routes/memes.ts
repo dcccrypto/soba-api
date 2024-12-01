@@ -79,11 +79,28 @@ router.post('/upload', upload.single('meme'), (req: Request, res: Response) => {
 // Get all memes endpoint
 router.get('/', (req: Request, res: Response) => {
   try {
-    // TODO: Implement fetching memes from database
+    const uploadDir = path.join(__dirname, '../../public/uploads');
+    const files = fs.readdirSync(uploadDir);
+    
+    const memes = files.map(filename => {
+      const filePath = path.join(uploadDir, filename);
+      const stats = fs.statSync(filePath);
+      
+      return {
+        id: path.parse(filename).name, // UUID is the filename without extension
+        filename,
+        originalName: filename,
+        mimeType: path.extname(filename).slice(1), // Remove the dot from extension
+        size: stats.size,
+        uploadDate: stats.birthtime.toISOString(),
+        url: `/uploads/${filename}`
+      };
+    });
+
     res.status(200).json({
       success: true,
       message: 'Memes retrieved successfully',
-      data: []
+      data: memes
     });
   } catch (error) {
     console.error('Error fetching memes:', error);
