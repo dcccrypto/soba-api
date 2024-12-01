@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import { TokenStats } from './types/index.js';
 import NodeCache from 'node-cache';
 import { formatNumber, formatPrice, formatUSD } from './utils/format.js';
+import memeRoutes from './routes/memes';
 
 // Configuration
 const SOLANA_RPC_ENDPOINTS = [
@@ -71,6 +72,9 @@ app.use((req, res, next) => {
   
   next();
 });
+
+// Serve uploaded files statically
+app.use('/uploads', express.static('public/uploads'));
 
 // Token data fetching functions
 async function getTokenPrice(): Promise<number> {
@@ -395,6 +399,9 @@ app.get('/token-stats', async (req: Request, res: Response) => {
     });
   }
 });
+
+// Routes
+app.use('/api/memes', memeRoutes);
 
 const port = process.env.PORT || 3001;
 app.listen(port, () => {
