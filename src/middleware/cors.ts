@@ -19,31 +19,31 @@ export const corsConfig = cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
       console.log('[CORS] Allowing request with no origin');
-      callback(null, true);
-      return;
+      return callback(null, true);
     }
 
-    // In development, allow all origins
-    if (isDevelopment) {
-      console.log('[CORS] Development mode - allowing origin:', origin);
-      callback(null, true);
-      return;
+    if (allowedOrigins.includes(origin) || isDevelopment) {
+      console.log('[CORS] Origin allowed:', origin);
+      return callback(null, true);
     }
 
-    // In production, check against allowedOrigins
-    if (allowedOrigins.includes(origin)) {
-      console.log('[CORS] Production mode - allowing origin:', origin);
-      callback(null, true);
-    } else {
-      console.log('[CORS] Blocked request from origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
+    console.log('[CORS] Origin not allowed:', origin);
+    callback(new Error('Not allowed by CORS'));
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept', 'X-Requested-With'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Origin',
+    'Accept',
+    'X-Requested-With',
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Methods',
+    'Access-Control-Allow-Headers'
+  ],
   exposedHeaders: ['Access-Control-Allow-Origin'],
   credentials: true,
   maxAge: 86400, // 24 hours
-  optionsSuccessStatus: 200,
-  preflightContinue: false
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 });

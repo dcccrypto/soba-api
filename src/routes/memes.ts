@@ -1,113 +1,91 @@
 import express, { Request, Response } from 'express';
-import multer, { FileFilterCallback } from 'multer';
-import path from 'path';
+import multer from 'multer';
+import { put } from '@vercel/blob';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
-    const uploadDir = path.join(__dirname, '../../public/uploads');
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
-    const uniqueFilename = `${uuidv4()}${path.extname(file.originalname)}`;
-    cb(null, uniqueFilename);
-  }
-});
-
-// File filter function
-const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: FileFilterCallback) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Only JPEG, PNG, and GIF files are allowed.'));
-  }
-};
-
-// Configure multer upload
+// Configure multer for memory storage
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB
-  }
+    fileSize: 4.5 * 1024 * 1024, // 4.5MB limit (Vercel Blob server upload limit)
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept images and GIFs
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  },
 });
 
 // Upload endpoint
-router.post('/upload', upload.single('meme'), (req: Request, res: Response) => {
+router.post('/upload', upload.single('meme'), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: 'No file uploaded',
-        error: 'Please provide a file'
+        error: 'No file uploaded'
       });
     }
 
-    // Return success response with file details
-    res.status(200).json({
+    const file = req.file;
+    const fileExtension = file.originalname.split('.').pop();
+    const filename = `${uuidv4()}.${fileExtension}`;
+
+    // Upload to Vercel Blob Storage
+    const blob = await put(filename, file.buffer, {
+      access: 'public',
+      contentType: file.mimetype,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+
+    return res.status(200).json({
       success: true,
-      message: 'File uploaded successfully',
       data: {
         id: uuidv4(),
-        filename: req.file.filename,
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        filename: blob.pathname,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
         uploadDate: new Date().toISOString(),
-        url: `/uploads/memes/${req.file.filename}`
+        url: blob.url
       }
     });
+
   } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({
+    console.error('Error uploading file:', error);
+    return res.status(500).json({
       success: false,
-      message: 'Failed to upload file',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Error uploading file'
     });
   }
 });
 
 // Get all memes endpoint
-router.get('/', (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
-    const uploadDir = path.join(__dirname, '../../public/uploads');
-    const files = fs.readdirSync(uploadDir);
-    
-    const memes = files.map(filename => {
-      const filePath = path.join(uploadDir, filename);
-      const stats = fs.statSync(filePath);
-      
-      return {
-        id: path.parse(filename).name, // UUID is the filename without extension
-        filename,
-        originalName: filename,
-        mimeType: path.extname(filename).slice(1), // Remove the dot from extension
-        size: stats.size,
-        uploadDate: stats.birthtime.toISOString(),
-        url: `/uploads/${filename}`
-      };
-    });
-
-    res.status(200).json({
+    // In a real application, you would fetch the list of memes from a database
+    // For now, we'll return a success message
+    res.json({
       success: true,
-      message: 'Memes retrieved successfully',
-      data: memes
+      message: 'Memes endpoint working',
+      data: [] // You'll want to populate this with actual meme data
     });
   } catch (error) {
     console.error('Error fetching memes:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch memes',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Error fetching memes'
     });
   }
 });
