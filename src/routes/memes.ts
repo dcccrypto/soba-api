@@ -1,14 +1,13 @@
-import express from 'express';
-import multer from 'multer';
-import { v4 as uuidv4 } from 'uuid';
+import express, { Request, Response } from 'express';
+import multer, { FileFilterCallback } from 'multer';
 import path from 'path';
-import fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
-// Configure multer for handling file uploads
+// Configure multer for file uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
     const uploadDir = path.join(__dirname, '../../public/uploads/memes');
     // Create directory if it doesn't exist
     if (!fs.existsSync(uploadDir)) {
@@ -16,73 +15,73 @@ const storage = multer.diskStorage({
     }
     cb(null, uploadDir);
   },
-  filename: (req, file, cb) => {
-    const uniqueId = uuidv4();
-    const extension = path.extname(file.originalname);
-    cb(null, `${uniqueId}${extension}`);
+  filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
+    const uniqueFilename = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueFilename);
   }
 });
 
-// File filter to only allow images
-const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+// File filter function
+const fileFilter = (req: Express.Request, file: Express.Multer.File, cb: FileFilterCallback) => {
   const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Invalid file type. Only JPEG, PNG and GIF files are allowed.'));
+    cb(new Error('Invalid file type. Only JPEG, PNG, and GIF files are allowed.'));
   }
 };
 
+// Configure multer upload
 const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 5 * 1024 * 1024 // 5MB
   }
 });
 
-// POST endpoint for meme uploads
-router.post('/upload', upload.single('meme'), async (req, res) => {
+// Upload endpoint
+router.post('/upload', upload.single('meme'), (req: Request, res: Response) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded',
+        error: 'Please provide a file'
+      });
     }
 
-    // Create meme record in database (you'll need to implement this)
-    const meme = {
-      id: uuidv4(),
-      filename: req.file.filename,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      uploadDate: new Date(),
-      url: `/uploads/memes/${req.file.filename}`
-    };
-
-    // Here you would save the meme record to your database
-    // For now, we'll just return the meme object
-    res.status(201).json({
+    // Return success response with file details
+    res.status(200).json({
       success: true,
-      message: 'Meme uploaded successfully',
-      data: meme
+      message: 'File uploaded successfully',
+      data: {
+        id: uuidv4(),
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        uploadDate: new Date().toISOString(),
+        url: `/uploads/memes/${req.file.filename}`
+      }
     });
   } catch (error) {
-    console.error('Error uploading meme:', error);
+    console.error('Upload error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to upload meme',
+      message: 'Failed to upload file',
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
-// GET endpoint to retrieve memes
-router.get('/', async (req, res) => {
+// Get all memes endpoint
+router.get('/', (req: Request, res: Response) => {
   try {
-    // Here you would fetch memes from your database
-    // For now, we'll return a placeholder response
-    res.json({
+    // TODO: Implement fetching memes from database
+    res.status(200).json({
       success: true,
+      message: 'Memes retrieved successfully',
       data: []
     });
   } catch (error) {
