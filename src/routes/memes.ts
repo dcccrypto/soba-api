@@ -16,7 +16,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 4.5 * 1024 * 1024, // 4.5MB limit (Vercel Blob server upload limit)
+    fileSize: 5 * 1024 * 1024, // 5MB limit
   },
   fileFilter: (req, file, cb) => {
     console.log('Received file:', { 
@@ -25,7 +25,6 @@ const upload = multer({
       size: file.size 
     });
 
-    // Accept images and GIFs
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -74,13 +73,8 @@ router.post('/upload', upload.single('meme'), async (req: Request, res: Response
     return res.status(200).json({
       success: true,
       data: {
-        id: uuidv4(),
-        filename: blob.pathname,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        uploadDate: new Date().toISOString(),
-        url: blob.url
+        url: blob.url,
+        pathname: blob.pathname
       }
     });
 
@@ -98,16 +92,17 @@ router.get('/', async (req: Request, res: Response) => {
   console.log('Fetching memes');
   
   try {
-    // In a real application, you would fetch the list of memes from a database
-    // For now, we'll return a success message
-    res.json({
+    // In a real application, you would fetch this from a database
+    // For now, return a sample response
+    return res.status(200).json({
       success: true,
-      message: 'Memes endpoint working',
-      data: [] // You'll want to populate this with actual meme data
+      data: {
+        memes: []
+      }
     });
   } catch (error) {
     console.error('Error fetching memes:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Error fetching memes'
     });
